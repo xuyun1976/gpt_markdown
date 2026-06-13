@@ -477,6 +477,14 @@ typedef InlineLinkBuilder = InlineSpan Function(LinkBuildDetails details);
 typedef InlineSourceTagBuilder =
     InlineSpan Function(SourceTagBuildDetails details);
 
+typedef PlaceholderBuilder =
+    Widget Function(
+      BuildContext context,
+      String type,
+      String id,
+      GptMarkdownConfig config,
+    );
+
 /// A configuration class for the GPT Markdown component.
 ///
 /// The [GptMarkdownConfig] class is used to configure the GPT Markdown component.
@@ -529,6 +537,8 @@ class GptMarkdownConfig {
     this.autolink = true,
     this.autolinkSchemes = const <String>{},
     this.scope = MarkdownScope.content,
+    this.attachment,
+    this.placeholderBuilder,
   });
 
   static final _registries = Expando<MarkdownBlockRegistry>();
@@ -713,6 +723,9 @@ class GptMarkdownConfig {
 
   /// The table builder.
   final TableBuilder? tableBuilder;
+
+  final dynamic attachment;
+  final PlaceholderBuilder? placeholderBuilder;
 
   /// A copy of the configuration with the specified parameters.
   GptMarkdownConfig copyWith({

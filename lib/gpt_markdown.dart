@@ -153,6 +153,8 @@ class GptMarkdown extends StatelessWidget {
       'Will be removed in 2.0.0.',
     )
     this.incremental = true,
+    this.attachment,
+    this.placeholderBuilder,
   });
 
   /// The direction of the text.
@@ -545,6 +547,8 @@ class GptMarkdown extends StatelessWidget {
 
   /// The easing [blockAnimation] plays on.
   final Curve blockAnimationCurve;
+  final dynamic attachment;
+  final PlaceholderBuilder? placeholderBuilder;
 
   /// A method to remove extra lines inside block LaTeX.
   // String _removeExtraLinesInsideBlockLatex(String text) {
@@ -639,6 +643,8 @@ class GptMarkdown extends StatelessWidget {
       autolink: autolink,
       autolinkSchemes: autolinkSchemes,
       tableBuilder: tableBuilder,
+      attachment: attachment,
+      placeholderBuilder: placeholderBuilder,
     );
 
     final normalized = _normalizeMarkdownSource(
