@@ -5,7 +5,7 @@ import 'markdown_config.dart';
 
 class PlaceholderMd extends BlockMd {
   @override
-  String get expString => r"\[([A-Z_]+):id=([^\]]+)\]";
+  String get expString => r"\[([A-Za-z_]+):id=([^\]]+)\]";
 
   @override
   Widget build(
