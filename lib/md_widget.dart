@@ -41,6 +41,7 @@ class MdWidget extends StatefulWidget {
     super.key,
     required this.config,
     this.isRoot = false,
+    this.tailing,
   });
 
   /// isRoot
@@ -55,6 +56,7 @@ class MdWidget extends StatefulWidget {
 
   /// The configuration of the markdown widget.
   final GptMarkdownConfig config;
+  final Widget? tailing;
 
   @override
   State<MdWidget> createState() => _MdWidgetState();
@@ -101,10 +103,32 @@ class _MdWidgetState extends State<MdWidget> {
       widget.config,
       widget.includeGlobalComponents,
     );
+
+    if (widget.isRoot && widget.tailing != null) {
+      list.add(
+        WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: widget.tailing!,
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    // list.add(
+    //   const WidgetSpan(
+    //     alignment: PlaceholderAlignment.middle,
+    //     child: Padding(
+    //       padding: EdgeInsets.only(left: 4),
+    //       child: Icon(
+    //         Icons.insert_chart,
+    //         size: 16,
+    //       ),
+    //     ),
+    //   ),
+    // );
+
     return widget.config.getRich(
       TextSpan(children: list, style: widget.config.style?.copyWith()),
       isRoot: widget.isRoot,

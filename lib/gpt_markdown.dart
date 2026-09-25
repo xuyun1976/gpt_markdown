@@ -155,6 +155,7 @@ class GptMarkdown extends StatelessWidget {
     this.incremental = true,
     this.attachment,
     this.placeholderBuilder,
+    this.tailing,
   });
 
   /// The direction of the text.
@@ -549,6 +550,7 @@ class GptMarkdown extends StatelessWidget {
   final Curve blockAnimationCurve;
   final dynamic attachment;
   final PlaceholderBuilder? placeholderBuilder;
+  final Widget? tailing;
 
   /// A method to remove extra lines inside block LaTeX.
   // String _removeExtraLinesInsideBlockLatex(String text) {
@@ -704,7 +706,7 @@ class GptMarkdown extends StatelessWidget {
     }
     return wrap(
       ClipRRect(
-        child: MdWidget(context, tex, true, isRoot: true, config: config),
+        child: MdWidget(context, tex, true, isRoot: true, config: config, tailing: tailing),
       ),
     );
   }
