@@ -56,7 +56,7 @@ class MdWidget extends StatefulWidget {
 
   /// The configuration of the markdown widget.
   final GptMarkdownConfig config;
-  final Widget? tailing;
+  final List<Widget>? tailing;
 
   @override
   State<MdWidget> createState() => _MdWidgetState();
@@ -105,12 +105,14 @@ class _MdWidgetState extends State<MdWidget> {
     );
 
     if (widget.isRoot && widget.tailing != null) {
-      list.add(
-        WidgetSpan(
-          alignment: PlaceholderAlignment.middle,
-          child: widget.tailing!,
-        ),
-      );
+      for (Widget widget in widget.tailing!) {
+        list.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: widget,
+          ),
+        );
+      }
     }
   }
 

@@ -550,7 +550,7 @@ class GptMarkdown extends StatelessWidget {
   final Curve blockAnimationCurve;
   final dynamic attachment;
   final PlaceholderBuilder? placeholderBuilder;
-  final Widget? tailing;
+  final List<Widget>? tailing;
 
   /// A method to remove extra lines inside block LaTeX.
   // String _removeExtraLinesInsideBlockLatex(String text) {
