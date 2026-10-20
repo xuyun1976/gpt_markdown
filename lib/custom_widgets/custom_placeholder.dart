@@ -6,8 +6,11 @@ import 'markdown_config.dart';
 class PlaceholderMd extends BlockMd {
   @override
   String get expString =>
-      r'!\[[^\]]*\]\((?<type1>[A-Za-z_]+):id=(?<id1>[^)]+)\)'
+      // ![desc](type:id=xxx) or [desc](type:id=xxx)
+      r'!?\[[^\]]*\]\((?<type1>[A-Za-z_]+):id=(?<id1>[^)]+)\)'
+      // (type:id=xxx)
       r'|\((?<type2>[A-Za-z_]+):id=(?<id2>[^)]+)\)'
+      // [type:id=xxx]
       r'|\[(?<type3>[A-Za-z_]+):id=(?<id3>[^\]]+)\]';
 
   @override
