@@ -3,7 +3,7 @@
 library;
 
 import 'package:flutter/gestures.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
 
@@ -349,7 +349,9 @@ void main() {
         'blockquote': '> a quoted line of text here',
       };
       const entered = <String, String>{
-        'table': '| A | B |\n|---|---|\n| 1 | 2 |',
+        // Finished by the text after it: a table still gaining rows is held
+        // until it is whole, so its entrance animates every row.
+        'table': '| A | B |\n|---|---|\n| 1 | 2 |\n\nAfter the table.',
         'fence': '```dart\nvar x = 1;\n```',
         'block maths': r'\[ E = mc^2 \]',
         'rule': '---',
@@ -450,7 +452,10 @@ void main() {
       const spans = <InlineSpan>[
         TextSpan(
           text: 'ab',
-          children: [TextSpan(text: 'cd'), TextSpan(text: 'e')],
+          children: [
+            TextSpan(text: 'cd'),
+            TextSpan(text: 'e'),
+          ],
         ),
       ];
       expect(countRevealCharacters(spans), 5);
@@ -616,8 +621,9 @@ void main() {
           if (span is! TextSpan) {
             return;
           }
-          final style =
-              inherited == null ? span.style : inherited.merge(span.style);
+          final style = inherited == null
+              ? span.style
+              : inherited.merge(span.style);
           final family = (style?.fontFamily ?? '').toLowerCase();
           final text = span.text;
           if (text != null && text.isNotEmpty && family.contains('mono')) {

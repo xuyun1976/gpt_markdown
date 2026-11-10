@@ -73,7 +73,7 @@ const String _maskOpen = '\u{E010}';
 const String _maskClose = '\u{E011}';
 
 /// Replaces every complete [directives] occurrence in [source] with an inert
-/// sentinel carrying its payload.
+/// sentinel carrying its payload — except inside code, which stays as written.
 ///
 /// Returns [source] unchanged when there is nothing to do, so a document
 /// without directives — which is every document unless the host configured
@@ -93,41 +93,117 @@ String maskInlineDirectives(
   if (directives.isEmpty) {
     return source;
   }
-  var out = source;
-  for (var index = 0; index < directives.length; index++) {
-    final directive = directives[index];
-    if (!out.contains(directive.open)) {
-      continue;
-    }
-    final buffer = StringBuffer();
-    var cursor = 0;
-    while (cursor < out.length) {
-      final start = out.indexOf(directive.open, cursor);
-      if (start == -1) {
-        break;
+  // Most replies hold no directive at all: one `indexOf` per directive, and no
+  // allocation, decides that.
+  if (!directives.any((d) => source.contains(d.open))) {
+    return source;
+  }
+
+  // One pass, left to right, where whatever starts first wins.
+  //
+  // A directive inside code is code: `` `genui{x}` `` is the reader's text,
+  // and masking it showed them the sentinel and its Base64 payload instead,
+  // because code is never expanded back. Fences — in a block quote too — and
+  // code spans are copied through untouched.
+  //
+  // And a directive's payload is opaque the other way round: a backtick in a
+  // JSON payload is not a code span. Finding code first and masking second
+  // would let that backtick pair with one in a later payload and hide a real
+  // directive, so the two are decided in the same scan.
+  final out = StringBuffer();
+  final n = source.length;
+  var i = 0;
+  var lineStart = true;
+  var paragraphEndsAt = -1;
+  FenceOpen? fence;
+  var fenceDepth = 0;
+  while (i < n) {
+    if (lineStart) {
+      final lineEnd = source.indexOf('\n', i);
+      final end = lineEnd == -1 ? n : lineEnd;
+      final line = source.substring(i, end);
+      if (fence != null && quoteDepth(line) < fenceDepth) {
+        fence = null;
       }
-      final from = start + directive.open.length;
-      final end = out.indexOf(directive.close, from);
-      if (end == -1) {
+      final open = fence;
+      final opens = open == null ? fenceOpen(unquoted(line)) : null;
+      if (open != null || opens != null) {
+        if (open != null && isFenceClose(unquoted(line), open)) {
+          fence = null;
+        } else if (opens != null) {
+          fence = opens;
+          fenceDepth = quoteDepth(line);
+        }
+        out.write(line);
+        if (lineEnd != -1) {
+          out.write('\n');
+        }
+        i = lineEnd == -1 ? n : lineEnd + 1;
+        continue;
+      }
+      lineStart = false;
+    }
+
+    // A directive starting here, earlier-declared directives first.
+    var matched = false;
+    for (var index = 0; index < directives.length; index++) {
+      final directive = directives[index];
+      if (!source.startsWith(directive.open, i)) {
+        continue;
+      }
+      final from = i + directive.open.length;
+      final close = source.indexOf(directive.close, from);
+      if (close == -1) {
         // Still arriving. Left as written so it reads as the literal text it
         // currently is, and masked on a later build once the closer lands.
-        break;
+        // Everything after it is its payload so far.
+        out.write(source.substring(i));
+        return out.toString();
       }
-      buffer
-        ..write(out.substring(cursor, start))
+      out
         ..write(_maskOpen)
         ..write(index)
         ..write(':')
-        ..write(base64Encode(utf8.encode(out.substring(from, end))))
+        ..write(base64Encode(utf8.encode(source.substring(from, close))))
         ..write(_maskClose);
-      cursor = end + directive.close.length;
+      i = close + directive.close.length;
+      matched = true;
+      break;
     }
-    if (buffer.isNotEmpty) {
-      buffer.write(out.substring(cursor));
-      out = buffer.toString();
+    if (matched) {
+      continue;
     }
+
+    final c = source.codeUnitAt(i);
+    if (c == 0x0A) {
+      out.writeCharCode(c);
+      i += 1;
+      lineStart = true;
+      continue;
+    }
+    if (c == 0x5C /* \ */ && i + 1 < n) {
+      // An escaped backtick opens no code span.
+      out.write(source.substring(i, i + 2));
+      lineStart = source.codeUnitAt(i + 1) == 0x0A;
+      i += 2;
+      continue;
+    }
+    if (c == 0x60 /* ` */ ) {
+      if (i > paragraphEndsAt) {
+        paragraphEndsAt = paragraphEnd(source, i);
+      }
+      final span = codeSpanAt(source, i, end: paragraphEndsAt);
+      final end = span != null
+          ? span.close + span.run
+          : i + backtickRunAt(source, i);
+      out.write(source.substring(i, end));
+      i = end;
+      continue;
+    }
+    out.writeCharCode(c);
+    i += 1;
   }
-  return out;
+  return out.toString();
 }
 
 /// Matches one masked directive, for the regex pipeline's component.
@@ -246,7 +322,28 @@ String maskInlinePatterns(
   final opaque = [
     ..._opaqueRegions(source),
     if (blockRegistry != null) ..._customBlockRegions(source, blockRegistry),
-  ];
+  ]..sort((a, b) => a.$1.compareTo(b.$1));
+  // Regions may nest (a code span inside a custom block); the running
+  // maximum of their ends is what a binary search over starts can rely on.
+  final reach = <int>[];
+  for (final region in opaque) {
+    reach.add(reach.isEmpty || region.$2 > reach.last ? region.$2 : reach.last);
+  }
+  bool overlapsOpaque(int start, int end) {
+    // The last region starting before `end`; any overlap reaches past `start`.
+    var low = 0;
+    var high = opaque.length;
+    while (low < high) {
+      final mid = (low + high) >> 1;
+      if (opaque[mid].$1 < end) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+    return low > 0 && reach[low - 1] > start;
+  }
+
   final hits = <({int start, int end, int pattern, String text})>[];
   for (var index = 0; index < patterns.length; index++) {
     for (final match in patterns[index].pattern.allMatches(source)) {
@@ -254,7 +351,7 @@ String maskInlinePatterns(
       if (text == null || text.isEmpty) {
         continue;
       }
-      if (opaque.any((r) => match.start < r.$2 && match.end > r.$1)) {
+      if (overlapsOpaque(match.start, match.end)) {
         continue;
       }
       hits.add((
@@ -293,34 +390,112 @@ String maskInlinePatterns(
 }
 
 /// Byte ranges of [source] a pattern must not reach into.
+///
+/// Fenced code and block maths, found with the parser's own fence rules — a
+/// ```` ```` ```` fence holding a ```` ``` ```` fence is one region, and a
+/// `~~~` fence closes only on tildes. Then, in the text between them, every
+/// code span and every inline formula. A code span is code the reader asked
+/// to see verbatim exactly as a fence is: masking a `:wave:` inside
+/// `` `:wave:` `` showed the reader the placeholder's raw payload, because
+/// code is never expanded back.
 List<(int, int)> _opaqueRegions(String source) {
-  final regions = <(int, int)>[];
+  final blocks = <(int, int)>[];
   var offset = 0;
+  FenceOpen? fence;
   int? fenceStart;
   int? mathStart;
+  var fenceDepth = 0;
   for (final line in source.split('\n')) {
     final trimmed = line.trimLeft();
-    if (fenceStart != null) {
-      if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
-        regions.add((fenceStart, offset + line.length));
-        fenceStart = null;
+    final open = fence;
+    // A fence inside a block quote closes with its closing line, or when the
+    // quote ends.
+    if (open != null && quoteDepth(line) < fenceDepth) {
+      blocks.add((fenceStart!, offset > 0 ? offset - 1 : 0));
+      fence = null;
+    }
+    final current = fence;
+    if (current != null) {
+      if (isFenceClose(unquoted(line), current)) {
+        blocks.add((fenceStart!, offset + line.length));
+        fence = null;
       }
     } else if (mathStart != null) {
       if (trimmed.contains(r'\]')) {
-        regions.add((mathStart, offset + line.length));
+        blocks.add((mathStart, offset + line.length));
         mathStart = null;
       }
-    } else if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
+    } else if ((fence = fenceOpen(unquoted(line))) != null) {
       fenceStart = offset;
+      fenceDepth = quoteDepth(line);
     } else if (trimmed.startsWith(r'\[') && !trimmed.contains(r'\]')) {
       mathStart = offset;
     }
     offset += line.length + 1;
   }
   // An unterminated region runs to the end.
-  final open = fenceStart ?? mathStart;
-  if (open != null) {
-    regions.add((open, source.length));
+  final unclosed = fence != null ? fenceStart : mathStart;
+  if (unclosed != null) {
+    blocks.add((unclosed, source.length));
+  }
+  return [...blocks, ..._inlineOpaqueRegions(source, blocks)];
+}
+
+/// Code spans and `\(…\)` / `\[…\]` formulas in [source] outside [blocks],
+/// matched as the inline parser matches them: a run of N backticks closes at
+/// the next run of exactly N in the same paragraph, an escaped backtick opens
+/// nothing, and a formula runs to its closing delimiter.
+List<(int, int)> _inlineOpaqueRegions(String source, List<(int, int)> blocks) {
+  if (!source.contains('`') && !source.contains(r'\')) {
+    return const [];
+  }
+  final regions = <(int, int)>[];
+  final n = source.length;
+  var paragraphEndsAt = -1;
+  var i = 0;
+  // [blocks] come in source order, so one cursor walks them alongside `i`.
+  var b = 0;
+  while (i < n) {
+    while (b < blocks.length && blocks[b].$2 <= i) {
+      b += 1;
+    }
+    if (b < blocks.length && i >= blocks[b].$1) {
+      // Skip a block region whole.
+      i = blocks[b].$2;
+      continue;
+    }
+    // The next block bounds a span's search.
+    final nextBlock = b < blocks.length ? blocks[b].$1 : n;
+    final c = source.codeUnitAt(i);
+    if (c == 0x5C /* \ */ && i + 1 < n) {
+      final next = source.codeUnitAt(i + 1);
+      if (next == 0x28 /* ( */ || next == 0x5B /* [ */ ) {
+        final end = source.indexOf(next == 0x28 ? r'\)' : r'\]', i + 2);
+        if (end != -1 && end < nextBlock) {
+          regions.add((i, end + 2));
+          i = end + 2;
+          continue;
+        }
+      }
+      // Any other escape is one unit: `\`` is a literal backtick.
+      i += 2;
+      continue;
+    }
+    if (c == 0x60 /* ` */ ) {
+      if (i > paragraphEndsAt) {
+        paragraphEndsAt = paragraphEnd(source, i);
+      }
+      final limit = paragraphEndsAt < nextBlock ? paragraphEndsAt : nextBlock;
+      final span = codeSpanAt(source, i, end: limit);
+      if (span != null) {
+        regions.add((i, span.close + span.run));
+        i = span.close + span.run;
+      } else {
+        i += backtickRunAt(source, i);
+      }
+      continue;
+    }
+    i += 1;
   }
   return regions;
 }

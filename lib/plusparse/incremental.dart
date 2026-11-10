@@ -13,7 +13,15 @@ part of '../gpt_markdown.dart';
 /// agree, or content moves when the seam does.
 double blockGap(BuildContext context, GptMarkdownConfig config) {
   final scaler = config.textScaler ?? MediaQuery.textScalerOf(context);
-  return scaler.scale((config.style?.fontSize ?? 14) * 1.15);
+  final fontSize = config.style?.fontSize ?? 14;
+  final spacing = resolvedStyleSheet(context, config).blockSpacing;
+  if (spacing == null) {
+    return scaler.scale(fontSize * 1.15);
+  }
+  // The same arithmetic as [paragraphBreakSpan]: the text there is scaled
+  // through its font size, so this scales the font size too rather than the
+  // spacing, and the two agree under a non-linear scaler as well.
+  return fontSize == 0 ? 0 : scaler.scale(fontSize) * spacing / fontSize;
 }
 
 /// Incremental (segment-cached) Markdown view, and the streaming reveal.
@@ -57,6 +65,7 @@ class _IncrementalMdView extends StatefulWidget {
     this.blockAnimationDuration = const Duration(milliseconds: 200),
     this.blockAnimationCurve = Curves.easeOut,
     this.holdMathDollars = false,
+    this.definitions,
   });
 
   final String text;
@@ -84,6 +93,11 @@ class _IncrementalMdView extends StatefulWidget {
   /// `$` instead of showing it as prose it will not stay.
   final bool holdMathDollars;
 
+  /// The link and footnote definitions of the document [text] belongs to,
+  /// when [text] is only part of it — [SliverGptMarkdown] renders one view
+  /// per segment. Null collects them from [text].
+  final MarkdownDefinitions? definitions;
+
   @override
   State<_IncrementalMdView> createState() => _IncrementalMdViewState();
 }
@@ -99,6 +113,13 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
   /// to avoid.
   final Map<(int, String), List<InlineSpan>> _spans = {};
   final Map<String, MdDocument> _documents = {};
+
+  /// The definitions every segment was parsed against, and, per segment
+  /// source, the labels its parse looked up. A changed definition re-parses
+  /// only the segments that asked for it — while a reference definition
+  /// streams in, its URL changes on every token.
+  MarkdownDefinitions _definitions = MarkdownDefinitions.empty;
+  final Map<String, Set<String>> _lookups = {};
   final Map<(int, String), int> _characterCounts = {};
   List<String> _segments = const [];
   List<List<InlineSpan>> _rendered = const [];
@@ -125,6 +146,16 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
   /// defaults to true and hosts routinely leave it on for a finished reply.
   bool _arriving = false;
   Timer? _arrivalTimer;
+
+  /// Whether this reply has grown by append since it mounted — whether it is
+  /// being streamed here, as opposed to shown whole. Sticky, unlike
+  /// [_arriving], so a model pausing mid-formula does not flip the formula
+  /// back to raw source; cleared when the text is replaced outright.
+  ///
+  /// Open formulas are completed only when this is set. `isStreaming` cannot
+  /// gate it: it defaults to true, and a finished reply with a stray `\(` or
+  /// an unpaired `$` would otherwise render the rest of its line as maths.
+  bool _streamedHere = false;
 
   /// Plain text per segment, for the one semantics label a streaming reply
   /// exposes. Only ever populated while an assistive service is reading, so a
@@ -196,6 +227,7 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
       _noteArrival();
     }
     if (widget.text != oldWidget.text ||
+        widget.definitions != oldWidget.definitions ||
         widget.isStreaming != oldWidget.isStreaming ||
         widget.revealing != oldWidget.revealing ||
         widget.holdMathDollars != oldWidget.holdMathDollars) {
@@ -205,10 +237,12 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
       _holdExpired = false;
     }
     if (!listEquals(
-      oldWidget.config.blockComponents,
-      widget.config.blockComponents,
-    )) {
+          oldWidget.config.blockComponents,
+          widget.config.blockComponents,
+        ) ||
+        oldWidget.config.markdownHtml != widget.config.markdownHtml) {
       _documents.clear();
+      _lookups.clear();
     }
     if (!oldWidget.config.isSame(widget.config)) {
       _dropCaches();
@@ -240,9 +274,27 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
       // tolerance matches the longest run the inline hold can be keeping
       // hidden ([markupDelimiterHold]), because that hold is exactly what
       // confines the rewrite to unseen text.
+      //
+      // A dollar formula closing is recognised whatever its length: an open
+      // formula renders while it streams, so a long `$$…$$` block is on
+      // screen, and resetting would retype the message around it.
+      //
+      // That holds when the formula is the very first thing in the reply,
+      // too: there `shared` is 0, and requiring a shared prefix treated the
+      // close as a new reply — the reveal reset to nothing and the whole
+      // message, formula included, blanked for several frames. The rewrite
+      // never shortens the text (`$$` and `\[` are the same length, and the
+      // closer was just appended), which a replacement usually does.
+      final dollarClosed =
+          shared < oldWidget.text.length &&
+          shared < widget.text.length &&
+          widget.text.length >= oldWidget.text.length &&
+          oldWidget.text.codeUnitAt(shared) == 0x24 /* $ */ &&
+          widget.text.codeUnitAt(shared) == 0x5C /* \ */;
       final tailEdit =
-          shared > 0 &&
-          oldWidget.text.length - shared <= markupDelimiterHold + 8;
+          dollarClosed ||
+          (shared > 0 &&
+              oldWidget.text.length - shared <= markupDelimiterHold + 8);
       if (!tailEdit) {
         // A regenerate or a branch switch replaces the text rather than
         // extending it; continuing from the old offset would be meaningless,
@@ -250,6 +302,7 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
         _engine.reset();
         _mountOffset = 0;
         _holdHighWater = 0;
+        _streamedHere = false;
         _startTicking();
         return;
       }
@@ -280,6 +333,7 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
   /// Marks the reply as arriving, and schedules the moment it stops being so.
   void _noteArrival() {
     _arriving = true;
+    _streamedHere = true;
     _arrivalTimer?.cancel();
     _arrivalTimer = Timer(_arrivalQuiet, () {
       if (!mounted) {
@@ -319,6 +373,9 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
       return;
     }
     final before = _engine.revealedFloor;
+    // Characters still fading before this tick: those that finish during it
+    // need one more build to drop their last step of style.
+    final fadingBefore = _engine.fadingFrom;
     final visibleBefore = _visibleCount(before);
     final keepGoing = _engine.tick(dt, _total, widget.charactersPerSecond);
     final after = _engine.revealedFloor;
@@ -328,10 +385,7 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
     // Only crossing a segment boundary changes the document's child list.
     // Inside a segment, notify just the active reveal/fade window.
     if (visibleBefore != visibleAfter) setState(() {});
-    final from = max(
-      0,
-      _visibleCount(max(0, before - RevealEngine.fadeWindow)) - 1,
-    );
+    final from = max(0, _visibleCount(fadingBefore) - 1);
     for (var i = from; i < visibleAfter && i < _segmentFrames.length; i++) {
       _segmentFrames[i].value++;
     }
@@ -359,10 +413,9 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
   /// scale itself rather than rely on a paragraph that is no longer there.
   /// Gated on [_clamped], because a line budget is the one case a block still
   /// has to stay inside a paragraph.
-  GptMarkdownConfig get _renderConfig =>
-      _clamped
-          ? widget.config
-          : widget.config.copyWith(blocksRenderDirectly: true);
+  GptMarkdownConfig get _renderConfig => _clamped
+      ? widget.config
+      : widget.config.copyWith(blocksRenderDirectly: true);
 
   /// Whether a line budget applies to this document.
   ///
@@ -381,6 +434,8 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
       _documents[segment] ??= Plusparse.parse(
         segment,
         blockRegistry: widget.config.blockRegistry,
+        html: widget.config.markdownHtml,
+        definitions: _definitions.recording(_lookups[segment] = <String>{}),
       ),
       _renderConfig,
     );
@@ -464,9 +519,14 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
       // A separator: the "\n" or "\n\n" the renderer puts between blocks.
       // It carries no content, so dropping it loses nothing — the column
       // stacks what it separated.
+      //
+      // Recognised by what it holds, not by its shape. While the reveal is
+      // fading it in, the same "\n" arrives rebuilt as a span with children.
+      // Testing for a childless span rejected it, so a list the fade was still
+      // passing over fell back to one paragraph of placeholders — a few pixels
+      // taller — and everything below jumped up when the fade moved on.
       if (span is TextSpan &&
-          span.children == null &&
-          (span.text ?? '').trim().isEmpty) {
+          span.toPlainText(includeSemanticsLabels: false).trim().isEmpty) {
         continue;
       }
       return null;
@@ -550,49 +610,103 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
   /// around the chip. Holding the head behind the unterminated construct costs
   /// a little latency and means every character is final when it appears.
   ///
+  /// Maths is the exception: an open formula is closed for the parser and
+  /// renders as far as it has arrived ([completeOpenMath]), so an equation
+  /// grows with the stream instead of appearing whole when its closer lands.
+  /// The renderer draws incomplete input, and the completion holds back a
+  /// command name still being typed, so no cut paints raw TeX.
+  ///
   /// Only the last segment can be incomplete, and only while more is coming.
-  /// A fence or block maths is left alone: those are opaque to begin with, and
-  /// [splitStreamSegments] already keeps them whole.
+  /// A fence is left alone: it is opaque to begin with, and
+  /// [splitStreamSegments] already keeps it whole.
   List<String> _visibleSegments(String source, List<String> segments) {
-    if (!widget.isStreaming ||
-        !widget.revealing ||
-        _holdExpired ||
-        segments.isEmpty) {
+    if (!widget.isStreaming || segments.isEmpty) {
       return segments;
     }
     final last = segments.last;
-    final opener = last.trimLeft();
     // Custom blocks own their incomplete-input policy; inline delimiters in
-    // their opaque bodies must never be held by the Markdown reveal.
-    if (widget.config.blockRegistry?.match(last.split('\n'), 0) != null) {
+    // their opaque bodies must never be held or completed by the Markdown
+    // reveal. Asked only when it could matter: matching is not free, and it
+    // runs on every rebuild.
+    bool isCustomBlock() =>
+        widget.config.blockRegistry?.match(last.split('\n'), 0) != null;
+    final revealing = widget.revealing && !_holdExpired;
+    if (revealing && isCustomBlock()) {
       return segments;
     }
-    // Block maths is opaque: whole or nothing. An unterminated `\[` hands
-    // partial tex to the renderer, which paints the raw source on any cut
-    // landing mid-command — the equation flickered rendered <-> raw several
-    // times while it streamed. So a closed block shows and an open one waits.
-    if (opener.startsWith(r'\[')) {
-      if (last.contains(r'\]')) {
-        return segments;
+    List<String> withTail(String tail) => [
+      ...segments.sublist(0, segments.length - 1),
+      if (tail.trim().isNotEmpty) tail,
+    ];
+    if (!_holdExpired) {
+      // A fence whose opening line is still arriving waits for the whole
+      // line. Its info string is the code block's language label: shown
+      // early, the label read `Code`, then `d`, `da`, `dart` as it streamed.
+      final opener = _partialFenceOpener(last);
+      if (opener != null) {
+        _armHoldRelease();
+        return withTail(last.substring(0, opener));
       }
-      _armHoldRelease();
-      return segments.sublist(0, segments.length - 1);
     }
     // An open fence streams as itself — its backticks are not inline
-    // delimiters, and its body must not be withheld.
+    // delimiters, and its body must not be withheld. Except its closer while
+    // it arrives: a lone ` or `` on the last line is the fence closing, not
+    // code, and shown it flashed as a stray backtick under the last line.
     if (_hasOpenFence(last)) {
+      final lineStart = last.lastIndexOf('\n') + 1;
+      if (!_holdExpired && _fenceRun.hasMatch(last.substring(lineStart))) {
+        _armHoldRelease();
+        return withTail(last.substring(0, lineStart));
+      }
       return segments;
+    }
+    if (widget.blockAnimation != GptMarkdownBlockAnimation.none &&
+        !_holdExpired) {
+      // A table still gaining rows waits until it is whole. Its entrance
+      // plays once, when it first appears — shown as soon as its header
+      // formed, the entrance animated a header alone and every row after it
+      // landed instantly, so the animation was barely seen. A table that
+      // stops growing is released by the quiet-stream timer.
+      final table = _openTableStart(last);
+      if (table != null) {
+        _armHoldRelease();
+        return withTail(last.substring(0, table));
+      }
     }
     // Fences that have already closed are opaque to the inline scanner too:
     // only the prose after the last one is scanned, or a closed fence's
     // backticks would be read as inline code and the prose after it would
     // stream unheld.
     final scanFrom = _afterLastFence(last);
+    final math = _streamedHere
+        ? completeOpenMath(
+            last.substring(scanFrom),
+            dollarsAreMath: widget.holdMathDollars,
+          )
+        : null;
+    final mathStart = math == null ? last.length : scanFrom + math.start;
+    String completedTail() => last.substring(0, mathStart) + math!.completed;
+
+    if (!revealing) {
+      return math == null || isCustomBlock()
+          ? segments
+          : withTail(completedTail());
+    }
+    // Block maths with nothing drawable yet waits, rather than flashing the
+    // bare `\[`.
+    if (math == null &&
+        last.trimLeft().startsWith(r'\[') &&
+        !last.contains(r'\]')) {
+      _armHoldRelease();
+      return segments.sublist(0, segments.length - 1);
+    }
+    // Everything before an open formula follows the usual hold.
     var safe =
         scanFrom +
         inlineSafeLength(
-          last.substring(scanFrom),
+          last.substring(scanFrom, mathStart),
           holdMathDollars: widget.holdMathDollars,
+          html: widget.config.markdownHtml,
         );
     // The hold never moves backwards. Offsets are kept against the whole
     // source so the mark survives the tail segment closing and a new one
@@ -603,18 +717,42 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
       if (floor > safe) {
         safe = min(floor, last.length);
       }
+      // Never into an open formula: its source is never shown raw.
+      safe = min(safe, mathStart);
       _holdHighWater = tailStart + safe;
+    }
+    if (math != null && safe >= mathStart) {
+      return withTail(completedTail());
     }
     if (safe >= last.length) {
       return segments;
     }
     _armHoldRelease();
-    final trimmed = last.substring(0, safe);
-    final out = segments.sublist(0, segments.length - 1);
-    if (trimmed.trim().isNotEmpty) {
-      out.add(trimmed);
+    return withTail(last.substring(0, safe));
+  }
+
+  /// Adopts [definitions], dropping every cached parse and render that looked
+  /// up a label whose definition changed.
+  void _updateDefinitions(MarkdownDefinitions definitions) {
+    if (definitions == _definitions) {
+      return;
     }
-    return out;
+    final changed = definitions.changedKeys(_definitions);
+    _definitions = definitions;
+    final stale = <String>{
+      for (final entry in _lookups.entries)
+        if (entry.value.any(changed.contains)) entry.key,
+    };
+    if (stale.isEmpty) {
+      return;
+    }
+    _documents.removeWhere((key, _) => stale.contains(key));
+    _lookups.removeWhere((key, _) => stale.contains(key));
+    bool hit((int, String) key) => stale.contains(key.$2);
+    _spans.removeWhere((key, _) => hit(key));
+    _characterCounts.removeWhere((key, _) => hit(key));
+    _settled.removeWhere((key, _) => hit(key));
+    _plainText.removeWhere((key, _) => hit(key));
   }
 
   /// Arms the quiet-stream release, once per stretch of unchanged text.
@@ -629,32 +767,80 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
     });
   }
 
+  /// Where the fence opener on [segment]'s last, still-arriving line begins,
+  /// or null.
+  ///
+  /// Only an opener: a line inside an already-open fence is code.
+  static int? _partialFenceOpener(String segment) {
+    final lineStart = segment.lastIndexOf('\n') + 1;
+    final line = segment.substring(lineStart);
+    if (fenceOpen(unquoted(line)) == null) return null;
+    final before = lineStart == 0 ? '' : segment.substring(0, lineStart - 1);
+    if (before.isNotEmpty && openFenceAfter(before.split('\n')) != null) {
+      return null;
+    }
+    return lineStart;
+  }
+
+  /// Where a pipe table that runs to the end of [segment] begins, or null.
+  ///
+  /// The table has its delimiter row and every line after its header is a
+  /// table row, so more rows may still be coming. Text after the table means
+  /// it is finished.
+  static int? _openTableStart(String segment) {
+    final lines = segment.split('\n');
+    var offset = 0;
+    for (var i = 0; i < lines.length - 1; i++) {
+      final line = lines[i];
+      if (line.trimLeft().startsWith('|') &&
+          _tableDelimiter.hasMatch(lines[i + 1])) {
+        final rest = lines.skip(i + 2);
+        final open = rest.every(
+          (l) => l.isEmpty || l.trimLeft().startsWith('|'),
+        );
+        return open ? offset : null;
+      }
+      offset += line.length + 1;
+    }
+    return null;
+  }
+
+  /// A line that is nothing but the start of a fence: backticks or tildes.
+  static final RegExp _fenceRun = RegExp(r'^\s*(`+|~+)$');
+
+  static final RegExp _tableDelimiter = RegExp(
+    r'^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$',
+  );
+
   /// Whether [segment] contains a fence that has not closed yet.
   ///
-  /// The same naive toggle [splitStreamSegments] uses, so the two always
-  /// agree about what is inside a fence.
-  static bool _hasOpenFence(String segment) {
-    var open = false;
-    for (final line in segment.split('\n')) {
-      if (line.trimLeft().startsWith('```')) {
-        open = !open;
-      }
-    }
-    return open;
-  }
+  /// The same fence rules [splitStreamSegments] and the parser use, so they
+  /// all agree about what is inside a fence.
+  static bool _hasOpenFence(String segment) =>
+      openFenceAfter(segment.split('\n')) != null;
 
   /// Offset just past the last line that closes a fence in [segment], or 0.
   static int _afterLastFence(String segment) {
-    var open = false;
+    FenceOpen? open;
+    var depth = 0;
     var after = 0;
     var offset = 0;
     for (final line in segment.split('\n')) {
       final lineEnd = offset + line.length;
-      if (line.trimLeft().startsWith('```')) {
-        open = !open;
-        if (!open) {
+      final current = open;
+      final lineDepth = quoteDepth(line);
+      if (current != null && lineDepth >= depth) {
+        if (isFenceClose(unquoted(line), current)) {
+          open = null;
           after = lineEnd < segment.length ? lineEnd + 1 : segment.length;
         }
+      } else {
+        // A quoted fence also closes when its quote ends.
+        if (current != null) {
+          after = offset;
+        }
+        open = fenceOpen(unquoted(line));
+        depth = lineDepth;
       }
       offset = lineEnd + 1;
     }
@@ -691,14 +877,13 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
   void _prepareDocument(BuildContext context) {
     if (_prepared) return;
     final patterns = widget.config.inlinePatterns;
-    final source =
-        patterns == null || patterns.isEmpty
-            ? widget.text
-            : maskInlinePatterns(
-              widget.text,
-              patterns,
-              blockRegistry: widget.config.blockRegistry,
-            );
+    final source = patterns == null || patterns.isEmpty
+        ? widget.text
+        : maskInlinePatterns(
+            widget.text,
+            patterns,
+            blockRegistry: widget.config.blockRegistry,
+          );
     // One segment when a line budget is in play — see [_clamped]. Splitting
     // is what makes an append cheap, but every segment becomes its own
     // paragraph and the budget is applied to each, so a two-line preview of a
@@ -706,18 +891,27 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
     // and no error. A clamped preview is a static excerpt rather than a
     // streaming reply, so it gives up incremental parsing to get its clamp
     // back.
-    _segments =
-        !_clamped
-            ? _visibleSegments(
+    _segments = !_clamped
+        ? _visibleSegments(
+            source,
+            _segmentCache.update(
               source,
-              _segmentCache.update(
-                source,
-                blockRegistry: widget.config.blockRegistry,
-              ),
-            )
-            : <String>[source];
+              blockRegistry: widget.config.blockRegistry,
+              html: widget.config.markdownHtml,
+            ),
+          )
+        : <String>[source];
+    _updateDefinitions(
+      widget.definitions ??
+          MarkdownDefinitions.collect(
+            source,
+            blockRegistry: widget.config.blockRegistry,
+            html: widget.config.markdownHtml,
+          ),
+    );
     final live = _segments.toSet();
     _documents.removeWhere((key, _) => !live.contains(key));
+    _lookups.removeWhere((key, _) => !live.contains(key));
     bool removed((int, String) key) =>
         key.$1 >= _segments.length || _segments[key.$1] != key.$2;
     _spans.removeWhere((key, _) => removed(key));
@@ -730,10 +924,8 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
     var offset = 0;
     for (var index = 0; index < _segments.length; index++) {
       final spans = _spansFor(context, _segments[index], index);
-      final count =
-          _characterCounts[(index, _segments[index])] ??= countRevealCharacters(
-            spans,
-          );
+      final count = _characterCounts[(index, _segments[index])] ??=
+          countRevealCharacters(spans);
       _rendered.add(spans);
       _starts.add(offset);
       _counts.add(count);
@@ -750,6 +942,27 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
     _prepared = true;
   }
 
+  /// The colour `wave`'s crest lands in: the theme accent's hue, made vivid
+  /// and kept clearly apart from the text in lightness.
+  ///
+  /// The accent as the theme gives it is not enough. Material 3's dark
+  /// `primary` is a pastel by design — `#BCC2FF` against `#E4E1E9` text, a
+  /// lightness gap of 0.03 — so a crest in it is near-white on near-white
+  /// and `wave` reads as a plain fade. Light text gets a crest well below
+  /// it, dark text one well above, and either way a saturated one.
+  static Color _waveCrest(Color accent, Color text) {
+    final hsl = HSLColor.fromColor(accent);
+    final textLightness = HSLColor.fromColor(text).lightness;
+    final lightness = textLightness > 0.5
+        ? min(hsl.lightness, textLightness - 0.3).clamp(0.45, 1.0)
+        : max(hsl.lightness, textLightness + 0.35).clamp(0.0, 0.6);
+    return hsl
+        .withSaturation(max(hsl.saturation, 0.75))
+        .withLightness(lightness.toDouble())
+        .toColor()
+        .withValues(alpha: accent.a);
+  }
+
   Widget _buildSegment(BuildContext context, int index) {
     final segment = _segments[index];
     final spans = _rendered[index];
@@ -759,22 +972,38 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
     final settled = _engine.revealedFloor >= _total && !_engine.tailStillFading;
     final fading = revealing && widget.effect.animatesCharacters && !settled;
     final revealed = revealing ? _engine.revealedFloor : _total;
-    final settledBelow = fading ? revealed - RevealEngine.fadeWindow : revealed;
+    // Exactly the characters still mid-entrance; everything behind them is
+    // finished and its segment can hand back its cached settled widget.
+    final settledBelow = fading ? _engine.fadingFrom : revealed;
     final Widget paragraph;
     if (end <= settledBelow) {
       paragraph = _settled[(index, segment)] ??= _paragraph(spans);
     } else {
+      final textColor =
+          widget.config.style?.color ??
+          DefaultTextStyle.of(context).style.color ??
+          Theme.of(context).colorScheme.onSurface;
       paragraph = _paragraph(
         applyReveal(
           spans: spans,
           revealed: revealed - start,
           effect: widget.effect,
           progressFor: (offset) => _engine.progressFor(start + offset),
-          defaultColor:
-              widget.config.style?.color ??
-              DefaultTextStyle.of(context).style.color ??
-              Theme.of(context).colorScheme.onSurface,
-          window: RevealEngine.fadeWindow,
+          defaultColor: textColor,
+          window: revealed - settledBelow,
+          // What `wave`'s crest lands in, and what `blurIn` scales its blur
+          // by. Read only while a segment is mid-reveal; a settled document
+          // never gets here.
+          accent: widget.effect == GptMarkdownAnimation.wave
+              ? _waveCrest(Theme.of(context).colorScheme.primary, textColor)
+              : null,
+          fontSize:
+              (widget.config.textScaler ?? MediaQuery.textScalerOf(context))
+                  .scale(
+                    widget.config.style?.fontSize ??
+                        DefaultTextStyle.of(context).style.fontSize ??
+                        14,
+                  ),
         ),
       );
     }
@@ -809,12 +1038,19 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
     final children = <Widget>[];
     final count = _visibleCount(revealed);
     for (var i = 0; i < count; i++) {
+      // A segment that renders nothing — only reference definitions, or only
+      // an HTML comment — takes no row. As an empty row it still received a
+      // gap on each side, and a reply ending in a block of definitions showed
+      // a large blank band where they were.
+      if (_rendered[i].isEmpty) {
+        continue;
+      }
       children.add(
         revealing
             ? ValueListenableBuilder<int>(
-              valueListenable: _segmentFrames[i],
-              builder: (context, _, _) => _buildSegment(context, i),
-            )
+                valueListenable: _segmentFrames[i],
+                builder: (context, _, _) => _buildSegment(context, i),
+              )
             : _buildSegment(context, i),
       );
     }
@@ -865,18 +1101,26 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
     // Nothing is hidden while it holds: the text so far is the label. The
     // structure — headings, links, list items as separate nodes — mounts the
     // moment the reveal lands.
+    //
+    // The wrappers stay in the tree either way; only their arguments flip.
+    // Returning the bare column once the reply went quiet changed the widget
+    // type at the root, so the whole document was torn down and re-inflated:
+    // every block entrance re-armed and played again from nothing (a finished
+    // table faded in a second time, a `growIn` block collapsed and regrew),
+    // table scroll offsets reset, and SVG images blanked for a frame. A model
+    // that paused for longer than [_arrivalQuiet] did it twice mid-stream.
+    // With `container: false` and no label the `Semantics` adds no node, so
+    // the settled tree is the same as with no wrapper at all.
     final animating =
         _arriving ||
         (revealing &&
             (_engine.revealedFloor < _total || _engine.tailStillFading));
-    if (!animating) {
-      return column;
-    }
     return Semantics(
-      container: true,
-      label:
-          MediaQuery.accessibleNavigationOf(context) ? _semanticsLabel() : null,
-      child: ExcludeSemantics(child: column),
+      container: animating,
+      label: animating && MediaQuery.accessibleNavigationOf(context)
+          ? _semanticsLabel()
+          : null,
+      child: ExcludeSemantics(excluding: animating, child: column),
     );
   }
 
@@ -887,13 +1131,9 @@ class _IncrementalMdViewState extends State<_IncrementalMdView>
   String _semanticsLabel() {
     final buffer = StringBuffer();
     for (var index = 0; index < _segments.length; index++) {
-      final text =
-          _plainText[(index, _segments[index])] ??= TextSpan(
-            children: _rendered[index],
-          ).toPlainText(
-            includeSemanticsLabels: false,
-            includePlaceholders: false,
-          );
+      final text = _plainText[(index, _segments[index])] ??= TextSpan(
+        children: _rendered[index],
+      ).toPlainText(includeSemanticsLabels: false, includePlaceholders: false);
       if (text.trim().isEmpty) {
         continue;
       }

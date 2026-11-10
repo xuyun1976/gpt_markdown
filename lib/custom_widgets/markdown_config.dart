@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:gpt_markdown/custom_widgets/bidi_rich_text.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
 
@@ -44,6 +44,14 @@ typedef CodeBlockBuilder =
     );
 
 /// A builder function for the LaTeX.
+@Deprecated(
+  'Use InlineLatexBuilder via GptMarkdown.inlineLatexBuilder for inline maths '
+  'and BlockLatexBuilder via GptMarkdown.blockLatexBuilder for block maths. '
+  'One Widget-returning builder serves both, so an inline formula has to be '
+  'wrapped in a WidgetSpan by the package, and its four positional parameters '
+  'leave nowhere to pass the source as written or a tap handler without '
+  'breaking every caller. Will be removed in 2.0.0.',
+)
 typedef LatexBuilder =
     Widget Function(
       BuildContext context,
@@ -179,6 +187,61 @@ typedef BlockQuoteBuilder =
       BlockQuoteStyle style,
     );
 
+/// Builds the widget for an alert — a quote opening with a marker such as
+/// `[!NOTE]`. See [AlertBuildDetails] for what it is given.
+typedef AlertBuilder =
+    Widget Function(BuildContext context, AlertBuildDetails details);
+
+/// What the alert builder is told about one alert.
+///
+/// Created by the package. Return [defaultAlert] to keep the stock look,
+/// [asBlockQuote] to draw this alert as the plain quote it would be without
+/// alert support, or a widget of your own built from [title] and [content].
+final class AlertBuildDetails {
+  /// Creates alert details.
+  AlertBuildDetails({
+    required this.context,
+    required this.config,
+    required this.type,
+    required this.style,
+    required this.title,
+    required this.content,
+    required this._buildDefault,
+    required this._buildQuote,
+  });
+
+  /// The element this alert is being built in.
+  final BuildContext context;
+
+  /// The configuration in force at this point in the document.
+  final GptMarkdownConfig config;
+
+  /// Which marker opened the alert.
+  final MarkdownAlertType type;
+
+  /// The [AlertStyle] for [type], fully resolved: accent colour, icon, title
+  /// and spacing, with the per-type override, theme and defaults folded in.
+  final AlertStyle style;
+
+  /// The stock title row — icon and title text in the accent colour — or an
+  /// empty box when the style hides both.
+  final Widget title;
+
+  /// The rendered body, without the marker line.
+  final Widget content;
+
+  final Widget Function() _buildDefault;
+  final Widget Function() _buildQuote;
+
+  /// The alert the package would have drawn.
+  Widget defaultAlert() => _buildDefault();
+
+  /// This alert drawn as an ordinary quote, marker line included — exactly
+  /// what the package drew before it knew about alerts, honouring
+  /// `blockQuoteBuilder`.
+  Widget asBlockQuote() => _buildQuote();
+}
+
 /// A builder function for the image.
 ///
 /// [width] and [height] come from the image alt text when parsed as `WxH`
@@ -253,16 +316,18 @@ final class LinkBuildDetails extends InlineBuildDetails {
     this.onTap,
   });
 
-  /// The link target, verbatim from the document — `/docs/a`,
-  /// `https://x.dev`, `mailto:a@b.c`. Never resolved or normalised.
+  /// The link target — `/docs/a`, `https://x.dev`, `mailto:a@b.c`. As
+  /// written, except that backslash escapes and entity references are decoded
+  /// (CommonMark), and a reference link (`[text][label]`) carries the URL of
+  /// its `[label]: url` definition. Never otherwise resolved or normalised.
   final String url;
 
   /// The label as plain text.
   ///
   /// This is what [GptMarkdownConfig.onLinkTap] receives as its second
   /// argument. For an autolink it is the URL itself. It is **not** a link
-  /// title — Markdown titles are not parsed yet, and when they are they arrive
-  /// as a field of their own.
+  /// title: the parser reads `[text](url "title")` titles into `MdLink.title`,
+  /// but they do not reach builders yet.
   final String label;
 
   /// The label, already parsed and styled with [style].
@@ -361,17 +426,23 @@ final class SourceTagBuildDetails extends InlineBuildDetails {
     required this.id,
     required this.sourceTagStyle,
     this.onTap,
+    this.url,
   });
 
   /// The tag's contents — `1` for `[1]`.
   final String id;
 
+  /// The URL the document defines for this tag with a `[1]: https://…`
+  /// reference definition, or null.
+  final String? url;
+
   /// The resolved [SourceTagStyle] — fill, text style, size, shape and
   /// padding, with theme and defaults already folded in.
   final SourceTagStyle sourceTagStyle;
 
-  /// Invokes [GptMarkdownConfig.onSourceTagTap] with [id], or null when no
-  /// handler is set.
+  /// Invokes [GptMarkdownConfig.onSourceTagTap] with [id]. Without that
+  /// handler, a tag with a [url] invokes [GptMarkdownConfig.onLinkTap] with
+  /// the URL and [id] instead. Null when neither applies.
   final VoidCallback? onTap;
 
   /// The chip the package would have built, as a placeholder span.
@@ -484,6 +555,166 @@ typedef PlaceholderBuilder =
       String id,
       GptMarkdownConfig config,
     );
+/// What [GptMarkdownConfig.onLatexTap] is told about a tap on a formula.
+@immutable
+final class LatexTapDetails {
+  /// Creates tap details.
+  const LatexTapDetails({
+    required this.tex,
+    required this.source,
+    required this.inline,
+    this.tappedTex,
+    this.href,
+  });
+
+  /// The whole formula as rendered, after [GptMarkdownConfig.latexWorkaround].
+  final String tex;
+
+  /// The whole formula as written in the document, before any workaround.
+  final String source;
+
+  /// Whether the formula is inline (`\(…\)`, `$…$`) rather than a block
+  /// (`\[…\]`, `$$…$$`).
+  final bool inline;
+
+  /// The TeX of the part under the finger — a symbol, a fraction, a group —
+  /// or null when the tap did not land on a part, or the builder that drew
+  /// the formula only reports the formula as a whole.
+  final String? tappedTex;
+
+  /// The target of an `\href{…}{…}` the tap landed on, or null.
+  final String? href;
+}
+
+/// What [InlineLatexBuilder] is told about one inline formula.
+///
+/// Like [LinkBuildDetails], this is the builder's only parameter: new
+/// information arrives as a new field, never as a new argument.
+final class InlineLatexBuildDetails extends InlineBuildDetails {
+  /// Creates inline formula details.
+  ///
+  /// [buildDefault] draws the formula the way the package does by default, and
+  /// [placeholder] places a widget in the line the way the package does;
+  /// [defaultSpan] and [asWidgetSpan] are built from them.
+  const InlineLatexBuildDetails({
+    required super.context,
+    required super.config,
+    required super.style,
+    required this.tex,
+    required this.source,
+    required this._buildDefault,
+    required this._placeholder,
+    this.onTap,
+  });
+
+  /// The formula to render, after [GptMarkdownConfig.latexWorkaround].
+  final String tex;
+
+  /// The formula as written in the document, before any workaround.
+  final String source;
+
+  /// Invokes [GptMarkdownConfig.onLatexTap] for this formula as a whole, or
+  /// null when no handler is set.
+  ///
+  /// [defaultSpan] already wires the handler, and reports which part of the
+  /// formula was tapped. Call this from a formula of your own, rather than
+  /// `onLatexTap` directly, so the details stay right when they change.
+  final VoidCallback? onTap;
+
+  final Widget Function() _buildDefault;
+  final InlineSpan Function(Widget child) _placeholder;
+
+  /// Exactly what the formula renders as when no builder is given, taps
+  /// included. Returning it is a no-op, so it is the place to start.
+  InlineSpan defaultSpan() => _placeholder(_buildDefault());
+
+  /// The default formula as a widget, not yet placed in the line — to wrap
+  /// in something of your own and hand to [asWidgetSpan].
+  Widget defaultWidget() => _buildDefault();
+
+  /// [child] placed in the line exactly the way the default formula is:
+  /// aligned on the text baseline, and scaled with the paragraph around it.
+  ///
+  /// [onTap] is not attached: a formula widget usually handles its own taps.
+  InlineSpan asWidgetSpan(Widget child) => _placeholder(child);
+}
+
+/// What [BlockLatexBuilder] is told about one block formula.
+///
+/// Like [LinkBuildDetails], this is the builder's only parameter: new
+/// information arrives as a new field, never as a new argument.
+@immutable
+final class BlockLatexBuildDetails {
+  /// Creates block formula details.
+  ///
+  /// [buildDefault] draws the formula the way the package does by default;
+  /// [defaultWidget] returns it.
+  const BlockLatexBuildDetails({
+    required this.context,
+    required this.config,
+    required this.style,
+    required this.tex,
+    required this.source,
+    required this._buildDefault,
+    this.onTap,
+  });
+
+  /// The element this formula is being built in.
+  final BuildContext context;
+
+  /// The configuration in force at this point in the document.
+  final GptMarkdownConfig config;
+
+  /// The text style the formula would be drawn with, fully resolved:
+  /// [LatexStyle.textStyle] applied over the surrounding style.
+  final TextStyle style;
+
+  /// The formula to render, after [GptMarkdownConfig.latexWorkaround].
+  final String tex;
+
+  /// The formula as written in the document, before any workaround.
+  final String source;
+
+  /// Invokes [GptMarkdownConfig.onLatexTap] for this formula as a whole, or
+  /// null when no handler is set.
+  ///
+  /// [defaultWidget] already wires the handler, and reports which part of the
+  /// formula was tapped.
+  final VoidCallback? onTap;
+
+  final Widget Function() _buildDefault;
+
+  /// Exactly what the formula renders as when no builder is given, taps
+  /// included. Returning it is a no-op, so it is the place to start.
+  ///
+  /// [LatexStyle]'s padding, background and horizontal scroll are applied
+  /// around whatever the builder returns, this included.
+  Widget defaultWidget() => _buildDefault();
+}
+
+/// Builds the span for one inline formula — `\(…\)`, or `$…$` with
+/// [GptMarkdown.useDollarSignsForLatex].
+///
+/// Return [InlineLatexBuildDetails.defaultSpan] to keep the stock formula, a
+/// span of your own (a `MathSpan` from `val_latex_flutter` with its own
+/// `onTap`, or plain text), or [InlineLatexBuildDetails.asWidgetSpan] around
+/// a widget:
+///
+/// ```dart
+/// inlineLatexBuilder: (latex) => latex.asWidgetSpan(
+///   Tooltip(message: latex.source, child: latex.defaultWidget()),
+/// ),
+/// ```
+typedef InlineLatexBuilder =
+    InlineSpan Function(InlineLatexBuildDetails details);
+
+/// Builds the widget for one block formula — `\[…\]`, or `$$…$$` with
+/// [GptMarkdown.useDollarSignsForLatex].
+///
+/// Return [BlockLatexBuildDetails.defaultWidget] to keep the stock formula,
+/// or a widget of your own. [LatexStyle]'s padding, background and horizontal
+/// scroll are applied around the result.
+typedef BlockLatexBuilder = Widget Function(BlockLatexBuildDetails details);
 
 /// A configuration class for the GPT Markdown component.
 ///
@@ -499,7 +730,13 @@ class GptMarkdownConfig {
     this.textAlign,
     this.textScaler,
     this.latexWorkaround,
+    this.inlineLatexBuilder,
+    this.blockLatexBuilder,
+    @Deprecated(
+      'Use inlineLatexBuilder and blockLatexBuilder. Will be removed in 2.0.0.',
+    )
     this.latexBuilder,
+    this.onLatexTap,
     this.followLinkColor = false,
     this.codeBuilder,
     this.inlineSourceTagBuilder,
@@ -526,6 +763,7 @@ class GptMarkdownConfig {
     this.inlineCodeStyle,
     this.styleSheet,
     this.blockQuoteBuilder,
+    this.alertBuilder,
     this.headingBuilder,
     this.checkboxBuilder,
     this.radioOptionBuilder,
@@ -539,9 +777,24 @@ class GptMarkdownConfig {
     this.scope = MarkdownScope.content,
     this.attachment,
     this.placeholderBuilder,
+    this.html = true,
+    this.htmlTags,
   });
 
   static final _registries = Expando<MarkdownBlockRegistry>();
+  static final _htmlTables = Expando<MarkdownHtml>();
+
+  /// The HTML table the parser reads: the built-in tags with [htmlTags]
+  /// applied, or none at all when [html] is off.
+  MarkdownHtml get markdownHtml {
+    if (!html) return MarkdownHtml.none;
+    final tags = htmlTags;
+    if (tags == null || tags.isEmpty) return MarkdownHtml.defaults;
+    return _htmlTables[tags] ??= MarkdownHtml.defaults.extend({
+      for (final entry in tags.entries) entry.key: entry.value?.syntax,
+    });
+  }
+
   static final _renderers = Expando<Map<String, MarkdownBlockBuilder>>();
 
   /// Components must be treated as immutable after registration.
@@ -580,8 +833,34 @@ class GptMarkdownConfig {
   /// The LaTeX workaround.
   final String Function(String tex)? latexWorkaround;
 
-  /// The LaTeX builder.
+  /// Builds the span for an inline formula, replacing the default one.
+  ///
+  /// Wins over [latexBuilder] for inline maths when both are set.
+  final InlineLatexBuilder? inlineLatexBuilder;
+
+  /// Builds the widget for a block formula, replacing the default one.
+  ///
+  /// Wins over [latexBuilder] for block maths when both are set.
+  final BlockLatexBuilder? blockLatexBuilder;
+
+  /// Builds every formula, inline and block, as a widget.
+  ///
+  /// Used only where [inlineLatexBuilder] or [blockLatexBuilder] is null. An
+  /// inline result is wrapped in a [WidgetSpan] by the package.
+  @Deprecated(
+    'Use inlineLatexBuilder and blockLatexBuilder. Will be removed in 2.0.0.',
+  )
   final LatexBuilder? latexBuilder;
+
+  /// Called when a formula is tapped, with the formula and the part of it
+  /// under the finger.
+  ///
+  /// The default formulas wire it, and so do
+  /// [InlineLatexBuildDetails.defaultSpan] and
+  /// [BlockLatexBuildDetails.defaultWidget]. A formula a builder draws itself
+  /// reaches it through the details' `onTap`. The deprecated [latexBuilder]
+  /// does not.
+  final void Function(LatexTapDetails details)? onLatexTap;
 
   /// Builds the span for a `[1]` citation chip, replacing the default chip.
   ///
@@ -680,6 +959,13 @@ class GptMarkdownConfig {
   /// Replaces the whole blockquote widget.
   final BlockQuoteBuilder? blockQuoteBuilder;
 
+  /// Replaces the whole alert widget. See [AlertBuildDetails].
+  ///
+  /// When this is null and [blockQuoteBuilder] is set, alerts go to
+  /// [blockQuoteBuilder] as ordinary quotes, as they did before alerts were
+  /// recognised — an app that customised its quotes keeps its look.
+  final AlertBuilder? alertBuilder;
+
   /// Replaces the whole heading widget.
   final HeadingBuilder? headingBuilder;
 
@@ -713,6 +999,12 @@ class GptMarkdownConfig {
   /// Extra URL schemes linked without `<>`. See [GptMarkdown.autolinkSchemes].
   final Set<String> autolinkSchemes;
 
+  /// Whether HTML tags are understood at all. See [GptMarkdown.html].
+  final bool html;
+
+  /// HTML tags added or overridden. See [GptMarkdown.htmlTags].
+  final Map<String, HtmlTag?>? htmlTags;
+
   /// The nesting context the current text is being rendered in.
   ///
   /// Set by the components that recurse — [ATagMd] renders its label with
@@ -735,7 +1027,13 @@ class GptMarkdownConfig {
     final TextAlign? textAlign,
     final TextScaler? textScaler,
     final String Function(String tex)? latexWorkaround,
+    final InlineLatexBuilder? inlineLatexBuilder,
+    final BlockLatexBuilder? blockLatexBuilder,
+    @Deprecated(
+      'Use inlineLatexBuilder and blockLatexBuilder. Will be removed in 2.0.0.',
+    )
     final LatexBuilder? latexBuilder,
+    final void Function(LatexTapDetails details)? onLatexTap,
     final InlineSourceTagBuilder? inlineSourceTagBuilder,
     @Deprecated('Use inlineSourceTagBuilder. Will be removed in 2.0.0.')
     final SourceTagBuilder? sourceTagBuilder,
@@ -762,6 +1060,7 @@ class GptMarkdownConfig {
     final InlineCodeStyle? inlineCodeStyle,
     final GptMarkdownStyleSheet? styleSheet,
     final BlockQuoteBuilder? blockQuoteBuilder,
+    final AlertBuilder? alertBuilder,
     final HeadingBuilder? headingBuilder,
     final CheckboxBuilder? checkboxBuilder,
     final RadioOptionBuilder? radioOptionBuilder,
@@ -772,6 +1071,8 @@ class GptMarkdownConfig {
     final void Function(String content)? onSourceTagTap,
     final bool? autolink,
     final Set<String>? autolinkSchemes,
+    final bool? html,
+    final Map<String, HtmlTag?>? htmlTags,
     final MarkdownScope? scope,
   }) {
     return GptMarkdownConfig(
@@ -781,7 +1082,11 @@ class GptMarkdownConfig {
       textAlign: textAlign ?? this.textAlign,
       textScaler: textScaler ?? this.textScaler,
       latexWorkaround: latexWorkaround ?? this.latexWorkaround,
+      inlineLatexBuilder: inlineLatexBuilder ?? this.inlineLatexBuilder,
+      blockLatexBuilder: blockLatexBuilder ?? this.blockLatexBuilder,
+      // ignore: deprecated_member_use_from_same_package
       latexBuilder: latexBuilder ?? this.latexBuilder,
+      onLatexTap: onLatexTap ?? this.onLatexTap,
       followLinkColor: followLinkColor ?? this.followLinkColor,
       codeBuilder: codeBuilder ?? this.codeBuilder,
       inlineSourceTagBuilder:
@@ -809,6 +1114,7 @@ class GptMarkdownConfig {
       inlineCodeStyle: inlineCodeStyle ?? this.inlineCodeStyle,
       styleSheet: styleSheet ?? this.styleSheet,
       blockQuoteBuilder: blockQuoteBuilder ?? this.blockQuoteBuilder,
+      alertBuilder: alertBuilder ?? this.alertBuilder,
       headingBuilder: headingBuilder ?? this.headingBuilder,
       checkboxBuilder: checkboxBuilder ?? this.checkboxBuilder,
       radioOptionBuilder: radioOptionBuilder ?? this.radioOptionBuilder,
@@ -820,6 +1126,8 @@ class GptMarkdownConfig {
       autolink: autolink ?? this.autolink,
       autolinkSchemes: autolinkSchemes ?? this.autolinkSchemes,
       scope: scope ?? this.scope,
+      html: html ?? this.html,
+      htmlTags: htmlTags ?? this.htmlTags,
     );
   }
 
@@ -850,8 +1158,9 @@ class GptMarkdownConfig {
     // `textScaler`. Descendant blocks inside this paragraph must switch
     // blocksRenderDirectly off: their placeholder already supplies scaling.
     final scaleFromAmbient = ambientScaling && !isRoot;
-    final effectiveScaler =
-        scaleFromAmbient ? null : (isRoot ? textScaler : TextScaler.noScaling);
+    final effectiveScaler = scaleFromAmbient
+        ? null
+        : (isRoot ? textScaler : TextScaler.noScaling);
     final codeRuns = collectInlineCodeRuns(span);
     // A tap target is resolved by the paragraph's render object, so a
     // paragraph holding one has to go through BidiText. Missing this renders
@@ -907,6 +1216,10 @@ class GptMarkdownConfig {
         // widget rebuilds with the new config and keeps rendering the old
         // output.
         setEquals(autolinkSchemes, other.autolinkSchemes) &&
+        html == other.html &&
+        // `HtmlTag` holds builder closures, so its entries compare by
+        // identity — define the map once, outside `build`.
+        mapEquals(htmlTags, other.htmlTags) &&
         inlineCodeStyle == other.inlineCodeStyle &&
         styleSheet == other.styleSheet &&
         // `InlinePattern` holds a builder closure and has no value equality,

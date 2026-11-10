@@ -1,5 +1,178 @@
 # Migration guide
 
+## 1.3.4 → 1.4.0
+
+No API is removed, and code that renders through `GptMarkdown` needs no
+change. Code that walks the parse tree itself with an exhaustive `switch` over
+`MdNode` needs cases (or a `_` default) for the three new nodes:
+`MdSuperscript`, `MdSubscript` and `MdHighlight`. The other additions are
+optional fields (`MdUnorderedList.loose`, `MdOrderedList.loose`,
+`MdLink.autolink`).
+
+The parser now follows CommonMark 0.31.2 closely
+([conformance](docs/commonmark.md)), so some replies parse differently:
+
+| Reply text | Now | Before |
+|---|---|---|
+| `my house is` / `14. The doors are 6.` | one paragraph | a list starting at 14 |
+| `- a` / `- b` / `text` | `text` continues item `b` | a paragraph after the list |
+| `- a` / `+ b` | two lists | one list |
+| `* * *` between `*` bullets | a rule | an item |
+| `***x***` | `MdItalic` around `MdBold` | `MdBold` around `MdItalic` (renders the same) |
+| `a*"b"*` | literal `*` | italic |
+| `[a [b](/u)](/u)` | only the inner link | a link inside a link |
+| `![a *b*](x.png)` | alt text `a b` | `a *b*` |
+| stray `\(` or `\[` | `(` or `[` | kept as written; a `\[` ate the rest of the reply |
+| `<b>x</b>`, `x<br>y`, `<table>`, `<ul>`, `<div>` lines | formatting, a break, a table, a list, hidden | literal tags |
+| `one  ` + newline, `one\` + newline | `MdLineBreak` | a newline inside `MdText` |
+| `<https://x.com>` | `MdLink` with `autolink: true` | text the renderer linked |
+
+Rendering through `GptMarkdown` looks the same for the last two rows.
+`autolink: false` still shows `<https://x.com>` as written.
+
+With `useDollarSignsForLatex`, single-dollar maths now comes first: a `$`
+pairs with the next `$` on its line, and the pair is maths unless both
+dollars are prices.
+
+| Reply text | Now | Before |
+|---|---|---|
+| `$ x $`, `$2 + 3$`, `$2 sin^2 \theta$` | maths | text |
+| `$1 \theta $2a`, `$x$5` | maths, then text | text |
+| `$5 and $10`, `$5M to $10M`, `5$ and 10$` | text | text |
+| `costs $5, so $x^2$` | `5, so ` is maths | `x^2` is maths |
+| `$x` on one line, `y$` on the next | text | maths, when parsed with `Plusparse.parse` directly |
+
+To keep a price next to a formula as text, escape it: `\$5`.
+
+## 1.3.3 → 1.3.4
+
+Nothing breaks. With `useDollarSignsForLatex`, a single `$x$` is now maths
+in a reply that also uses `\(…\)` — before, any `\(` turned single-dollar
+maths off for the whole reply. Prices are unaffected: `$5 and $10` stays
+text.
+
+## 1.3.2 → 1.3.3
+
+No API is removed. Two things to check:
+
+* **Exhaustive switches over `MdNode`** need cases for the new
+  `MdFootnoteReference` and `MdFootnoteDefinitions`. Code that only renders
+  through `GptMarkdown` is unaffected.
+* **Some replies render differently**, because more CommonMark is supported:
+
+  | Reply text | Now | To keep the old look |
+  |---|---|---|
+  | `Text` with `---` on the next line | `Text` is a heading | Blank line before `---` |
+  | `__init__` outside backticks | bold `init` | Put identifiers in backticks |
+  | `\*`, `\_`, `\#` | the character, backslash hidden | Write `\\` for a visible backslash |
+  | `&amp;`, `&copy;` | decoded to `&`, `©` | Write `&amp;amp;` |
+  | `$5 and $10` with `useDollarSignsForLatex` | stays text | — (was wrongly maths) |
+  | `<!-- note -->` | hidden | — |
+
+## 1.3.1 → 1.3.2
+
+Nothing breaks. `latexBuilder` is deprecated and keeps working; it is removed
+in 2.0.0.
+
+One widget builder used to serve every formula, so an inline formula always
+became a `WidgetSpan` the package wrapped, and there was nowhere to pass a tap
+handler or the source as written. It is split in two:
+
+```dart
+// Before
+GptMarkdown(
+  reply,
+  latexBuilder: (context, tex, style, inline) => inline
+      ? Math.tex(tex, textStyle: style)
+      : Center(child: Math.tex(tex, textStyle: style, displayMode: true)),
+)
+
+// After
+GptMarkdown(
+  reply,
+  inlineLatexBuilder: (latex) => MathSpan(latex.tex, style: latex.style),
+  blockLatexBuilder: (latex) => Center(child: latex.defaultWidget()),
+)
+```
+
+* `inlineLatexBuilder` returns an `InlineSpan`. A widget still works through
+  `latex.asWidgetSpan(widget)`, which places it exactly where the default
+  formula sits.
+* `blockLatexBuilder` returns a `Widget`. `LatexStyle` padding, background and
+  horizontal scroll still wrap it.
+* `latex.tex` is what the old builder's `tex` was (after `latexWorkaround`);
+  `latex.source` is the formula as written.
+* Migrate one side at a time if you like: where a new builder is set it wins,
+  and `latexBuilder` still handles the other side.
+
+If all you wanted from a builder was a tap, drop it and use `onLatexTap`:
+
+```dart
+GptMarkdown(reply, onLatexTap: (tap) => explain(tap.source))
+```
+
+---
+
+## 1.3.0 → 1.3.1
+
+No public API changes: every widget argument, builder, typedef and style
+keeps its name and type. Two dependencies were swapped, and that is where the
+work is, if any.
+
+### Requirements
+
+The minimum SDK is now **Dart 3.9 and Flutter 3.35**, which the new
+highlighting and maths packages need.
+
+### Maths: `flutter_math_fork` → `val_latex_flutter`
+
+The built-in renderer now uses
+[`val_latex_flutter`](https://pub.dev/packages/val_latex_flutter), and
+`gpt_markdown` no longer depends on `flutter_math_fork`.
+
+**If your `latexBuilder` imports `flutter_math_fork`, check your
+`pubspec.yaml`.** It compiled before even if the package was not listed there,
+because `gpt_markdown` pulled it in. It no longer does, so the import fails with
+`Target of URI doesn't exist`. Pick one:
+
+```yaml
+# Keep flutter_math_fork: list it yourself.
+dependencies:
+  flutter_math_fork: ^0.7.4
+```
+
+```dart
+// Or switch engines by changing one import. The compat library keeps
+// Math.tex, SelectableMath, MathOptions, MathStyle, TexParserSettings and
+// onErrorFallback, backed by val_latex.
+// import 'package:flutter_math_fork/flutter_math.dart';
+import 'package:val_latex_flutter/flutter_math_compat.dart';
+```
+
+Either way, list the package you import in your own `pubspec.yaml` (for the
+second, `val_latex_flutter: ^0.1.0`). Leaning on `gpt_markdown`'s dependencies
+is what breaks here, and `depend_on_referenced_packages` flags it.
+
+No compiler warning covers these:
+
+* **Font.** Formulas are set in Latin Modern Math instead of KaTeX's fonts.
+  Size (1.2× the text), colour, display style and the raw-TeX fallback for a
+  formula that does not parse are unchanged. Goldens with maths in them move.
+* **Copying.** Inside a `SelectionArea`, selecting part of a formula copies the
+  LaTeX of that part; selecting all of it copies the whole source, as before.
+* **Unfinished input.** A formula still streaming in (`\frac{a`) renders what
+  exists instead of falling back to raw TeX.
+
+### Code blocks: `highlight` → `val_highlight_flutter`
+
+Code blocks are highlighted with
+[`val_highlight_flutter`](https://pub.dev/packages/val_highlight_flutter). The
+token colours change (its `light` and `dark` themes), and 55 languages are
+supported instead of about 190; a fence tag it does not know renders as plain
+text, as an unknown tag always has. Goldens with code blocks in them move.
+
+---
+
 ## 1.2.x → 1.3.0
 
 Nothing is removed in 1.3.0. Every deprecated argument, class and builder below

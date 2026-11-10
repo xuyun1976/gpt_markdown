@@ -14,7 +14,8 @@ dependencies:
   cupertino_icons: ^1.0.2
   gpt_markdown:
     path: ..
-  flutter_math_fork: ^0.7.2
+  material_ui: ^1.10.0
+  val_latex_flutter: ^0.1.4
 
 dev_dependencies:
   flutter_test:

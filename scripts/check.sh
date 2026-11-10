@@ -4,16 +4,24 @@
 # run locally means a green run on CI — there is only one definition of
 # "passing".
 #
-#   ./scripts/check.sh          # check formatting, do not modify
-#   ./scripts/check.sh --fix    # apply formatting instead of failing on it
+#   ./scripts/check.sh           # check formatting, do not modify
+#   ./scripts/check.sh --fix     # apply formatting instead of failing on it
+#   ./scripts/check.sh --golden  # also compare the golden images
+#
+# Goldens are off by default, CI included: text rasterisation differs between
+# platforms, so they only match on the machine that generated them.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 FIX=0
-if [[ "${1:-}" == "--fix" ]]; then
-  FIX=1
-fi
+for arg in "$@"; do
+  case "$arg" in
+    --fix) FIX=1 ;;
+    --golden) export GPT_MARKDOWN_GOLDENS=1 ;;
+    *) echo "unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
 
 # The package plus the apps that exercise it. The example is what pub.dev
 # shows; the widgetbook is the catalogue used to inspect components;
@@ -30,12 +38,16 @@ for package in "${PACKAGES[@]}"; do
 done
 
 step "format"
+# The Dart files git knows about — committed or new, not ignored. `.` would
+# also walk git-ignored folders (build output, a local demo/) that CI never
+# sees, and fail locally on files that are not part of the project.
+dart_files() { git ls-files --cached --others --exclude-standard -- '*.dart'; }
 if [[ $FIX -eq 1 ]]; then
-  dart format .
+  dart_files | xargs dart format
 else
   # Formatting is part of the 50-point analysis category on pub.dev, so it is
   # a hard failure rather than a warning.
-  dart format --output=none --set-exit-if-changed .
+  dart_files | xargs dart format --output=none --set-exit-if-changed
 fi
 
 for package in "${PACKAGES[@]}"; do

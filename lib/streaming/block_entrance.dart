@@ -6,7 +6,7 @@
 /// layout, and every block below it moves at once.
 library;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'reveal_effect.dart';
 
@@ -55,6 +55,10 @@ class _GptMarkdownBlockEntranceState extends State<GptMarkdownBlockEntrance>
   /// Where [GptMarkdownBlockAnimation.scaleIn] starts.
   static const double _scaleFrom = 0.96;
 
+  /// How long a block takes to grow into a new line it gained after its
+  /// entrance.
+  static const Duration _growDuration = Duration(milliseconds: 240);
+
   AnimationController? _controller;
   late final CurvedAnimation _eased;
   bool _decided = false;
@@ -99,7 +103,16 @@ class _GptMarkdownBlockEntranceState extends State<GptMarkdownBlockEntrance>
     if (controller == null) {
       return widget.child;
     }
-    final faded = FadeTransition(opacity: _eased, child: widget.child);
+    // A block can keep growing after its entrance — a code block gains a
+    // line at a time while its fence is open. Easing the height there keeps
+    // the text below gliding instead of stepping down a line per chunk.
+    final grows = AnimatedSize(
+      duration: _growDuration,
+      curve: Curves.easeOutCubic,
+      alignment: AlignmentDirectional.topStart,
+      child: widget.child,
+    );
+    final faded = FadeTransition(opacity: _eased, child: grows);
     switch (widget.animation) {
       case GptMarkdownBlockAnimation.none:
         return widget.child;
@@ -116,13 +129,12 @@ class _GptMarkdownBlockEntranceState extends State<GptMarkdownBlockEntrance>
         return ClipRect(
           child: AnimatedBuilder(
             animation: _eased,
-            builder:
-                (context, child) => Align(
-                  alignment: AlignmentDirectional.topStart,
-                  widthFactor: 1.0,
-                  heightFactor: _eased.value.clamp(0.0, 1.0),
-                  child: child,
-                ),
+            builder: (context, child) => Align(
+              alignment: AlignmentDirectional.topStart,
+              widthFactor: 1.0,
+              heightFactor: _eased.value.clamp(0.0, 1.0),
+              child: child,
+            ),
             child: faded,
           ),
         );
@@ -130,23 +142,21 @@ class _GptMarkdownBlockEntranceState extends State<GptMarkdownBlockEntrance>
       case GptMarkdownBlockAnimation.slideUp:
         return AnimatedBuilder(
           animation: _eased,
-          builder:
-              (context, child) => Transform.translate(
-                offset: Offset(0, _slideDistance * (1 - _eased.value)),
-                child: child,
-              ),
+          builder: (context, child) => Transform.translate(
+            offset: Offset(0, _slideDistance * (1 - _eased.value)),
+            child: child,
+          ),
           child: faded,
         );
 
       case GptMarkdownBlockAnimation.scaleIn:
         return AnimatedBuilder(
           animation: _eased,
-          builder:
-              (context, child) => Transform.scale(
-                scale: _scaleFrom + (1 - _scaleFrom) * _eased.value,
-                alignment: AlignmentDirectional.topStart,
-                child: child,
-              ),
+          builder: (context, child) => Transform.scale(
+            scale: _scaleFrom + (1 - _scaleFrom) * _eased.value,
+            alignment: AlignmentDirectional.topStart,
+            child: child,
+          ),
           child: faded,
         );
     }

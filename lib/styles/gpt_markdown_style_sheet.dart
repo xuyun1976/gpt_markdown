@@ -1,6 +1,8 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../custom_widgets/inline_code.dart';
+import 'alert_style.dart';
+import 'style_lerp.dart';
 import 'block_quote_style.dart';
 import 'heading_style.dart';
 import 'link_style.dart';
@@ -12,6 +14,8 @@ import 'image_style.dart';
 import 'hr_style.dart';
 import 'source_tag_style.dart';
 import 'latex_style.dart';
+import 'highlight_style.dart';
+import 'script_style.dart';
 
 /// Per-component appearance, in one object.
 ///
@@ -53,7 +57,11 @@ class GptMarkdownStyleSheet {
     this.hr,
     this.sourceTag,
     this.latex,
-  });
+    this.alert,
+    this.highlight,
+    this.script,
+    this.blockSpacing,
+  }) : assert(blockSpacing == null || blockSpacing >= 0);
 
   /// How blockquotes are drawn.
   final BlockQuoteStyle? blockQuote;
@@ -91,6 +99,25 @@ class GptMarkdownStyleSheet {
   /// How rendered maths are drawn.
   final LatexStyle? latex;
 
+  /// How alerts — quotes opening with `[!NOTE]` and the like — are drawn.
+  final AlertStyle? alert;
+
+  /// How highlighted text — `<mark>` — is drawn.
+  final HighlightStyle? highlight;
+
+  /// How superscript and subscript text — `<sup>`, `<sub>` — is drawn.
+  final ScriptStyle? script;
+
+  /// Vertical space between blocks — paragraphs, headings, lists, code, tables
+  /// and the rest — in logical pixels at a text scale of 1. It grows with the
+  /// text scale, so the gap stays in proportion when a reader enlarges text.
+  ///
+  /// Defaults to one empty line: 1.15 × the font size, 16 pixels at the
+  /// default 14. Extra blank lines in the source never add more; three or ten
+  /// in a row give the same single gap. A block's own margin or padding, such
+  /// as [BlockQuoteStyle.margin], is added on top.
+  final double? blockSpacing;
+
   /// This sheet, with any unset value taken from [other], field by field.
   GptMarkdownStyleSheet merge(GptMarkdownStyleSheet? other) {
     if (other == null) {
@@ -109,6 +136,10 @@ class GptMarkdownStyleSheet {
       hr: hr?.merge(other.hr) ?? other.hr,
       sourceTag: sourceTag?.merge(other.sourceTag) ?? other.sourceTag,
       latex: latex?.merge(other.latex) ?? other.latex,
+      alert: alert?.merge(other.alert) ?? other.alert,
+      highlight: highlight?.merge(other.highlight) ?? other.highlight,
+      script: script?.merge(other.script) ?? other.script,
+      blockSpacing: blockSpacing ?? other.blockSpacing,
     );
   }
 
@@ -126,6 +157,10 @@ class GptMarkdownStyleSheet {
     HrStyle? hr,
     SourceTagStyle? sourceTag,
     LatexStyle? latex,
+    AlertStyle? alert,
+    HighlightStyle? highlight,
+    ScriptStyle? script,
+    double? blockSpacing,
   }) {
     return GptMarkdownStyleSheet(
       blockQuote: blockQuote ?? this.blockQuote,
@@ -140,6 +175,10 @@ class GptMarkdownStyleSheet {
       hr: hr ?? this.hr,
       sourceTag: sourceTag ?? this.sourceTag,
       latex: latex ?? this.latex,
+      alert: alert ?? this.alert,
+      highlight: highlight ?? this.highlight,
+      script: script ?? this.script,
+      blockSpacing: blockSpacing ?? this.blockSpacing,
     );
   }
 
@@ -165,6 +204,10 @@ class GptMarkdownStyleSheet {
       hr: HrStyle.lerp(a?.hr, b?.hr, t),
       sourceTag: SourceTagStyle.lerp(a?.sourceTag, b?.sourceTag, t),
       latex: LatexStyle.lerp(a?.latex, b?.latex, t),
+      alert: AlertStyle.lerp(a?.alert, b?.alert, t),
+      highlight: HighlightStyle.lerp(a?.highlight, b?.highlight, t),
+      script: ScriptStyle.lerp(a?.script, b?.script, t),
+      blockSpacing: lerpDouble(a?.blockSpacing, b?.blockSpacing, t),
     );
   }
 
@@ -185,7 +228,11 @@ class GptMarkdownStyleSheet {
         other.image == image &&
         other.hr == hr &&
         other.sourceTag == sourceTag &&
-        other.latex == latex;
+        other.latex == latex &&
+        other.alert == alert &&
+        other.highlight == highlight &&
+        other.script == script &&
+        other.blockSpacing == blockSpacing;
   }
 
   @override
@@ -202,5 +249,9 @@ class GptMarkdownStyleSheet {
     hr,
     sourceTag,
     latex,
+    alert,
+    highlight,
+    script,
+    blockSpacing,
   );
 }

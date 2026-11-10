@@ -39,7 +39,11 @@ class PlusparseRenderer {
     }
     return renderDocument(
       context,
-      Plusparse.parse(text, blockRegistry: config.blockRegistry),
+      Plusparse.parse(
+        text,
+        blockRegistry: config.blockRegistry,
+        html: config.markdownHtml,
+      ),
       config,
       inlineOnly: inlineOnly,
     );
@@ -70,16 +74,6 @@ class PlusparseRenderer {
   // ---------------------------------------------------------------------
   // Block level
   // ---------------------------------------------------------------------
-
-  /// The paragraph-break span the regex pipeline's `NewLines` component emits.
-  static TextSpan _paragraphBreak(GptMarkdownConfig config) => TextSpan(
-    text: "\n\n",
-    style: TextStyle(
-      fontSize: config.style?.fontSize ?? 14,
-      height: 1.15,
-      color: config.style?.color,
-    ),
-  );
 
   /// Replicates `BlockMd.span`'s wrapping of a block widget.
   static InlineSpan _blockSpan(Widget child) => BlockWidgetSpan(
@@ -126,7 +120,7 @@ class PlusparseRenderer {
       if (spans.isNotEmpty) {
         spans.add(
           separator == "\n\n"
-              ? _paragraphBreak(config)
+              ? paragraphBreakSpan(context, config)
               : TextSpan(text: separator, style: config.style),
         );
       }
@@ -141,6 +135,9 @@ class PlusparseRenderer {
     GptMarkdownConfig config,
   ) {
     switch (node) {
+      case MdCustomBlock(:final HtmlElementData data)
+          when node.type == htmlElementType:
+        return _htmlBlock(context, node, data, config);
       case MdCustomBlock():
         final builder = config.blockRenderers[node.type];
         return [
@@ -159,10 +156,8 @@ class PlusparseRenderer {
             context,
             config,
             level: level,
-            buildChildren:
-                (conf) => transform(
-                  content ??= _inlineSpans(context, children, conf),
-                ),
+            buildChildren: (conf) =>
+                transform(content ??= _inlineSpans(context, children, conf)),
           );
           return RevealableSpan(
             content: content!,
@@ -189,6 +184,47 @@ class PlusparseRenderer {
         return [
           _blockSpan(latexWidget(context, config, tex: tex, inline: false)),
         ];
+      case MdBlockQuote(:final children, :final alert)
+          when alert != null && _rendersAlerts(config):
+        Widget quoteContent(GptMarkdownConfig conf) => conf.getRich(
+          TextSpan(
+            children: _blockSpans(
+              context,
+              children,
+              conf.copyWith(blocksRenderDirectly: false),
+            ),
+          ),
+          ambientScaling: conf.blocksRenderDirectly,
+        );
+        // Built once, as for a quote below; the title is not part of the
+        // reveal, only the body is.
+        List<InlineSpan>? content;
+        InlineSpan build(SpanTransform transform) {
+          final child = alertSpan(
+            context,
+            config,
+            type: alert.type,
+            buildContent: (conf) => conf.getRich(
+              TextSpan(
+                children: transform(
+                  content ??= _blockSpans(
+                    context,
+                    alert.children,
+                    conf.copyWith(blocksRenderDirectly: false),
+                  ),
+                ),
+              ),
+              ambientScaling: conf.blocksRenderDirectly,
+            ),
+            buildQuoteContent: quoteContent,
+          );
+          return RevealableSpan(
+            content: content!,
+            rebuild: build,
+            children: [child],
+          );
+        }
+        return [build(_identity)];
       case MdBlockQuote(:final children):
         // Build once under the actual quote style. Counting an independently
         // rendered copy used to double the work at EVERY nesting level.
@@ -197,19 +233,18 @@ class PlusparseRenderer {
           final child = blockQuoteSpan(
             context,
             config,
-            buildContent:
-                (conf) => conf.getRich(
-                  TextSpan(
-                    children: transform(
-                      content ??= _blockSpans(
-                        context,
-                        children,
-                        conf.copyWith(blocksRenderDirectly: false),
-                      ),
-                    ),
+            buildContent: (conf) => conf.getRich(
+              TextSpan(
+                children: transform(
+                  content ??= _blockSpans(
+                    context,
+                    children,
+                    conf.copyWith(blocksRenderDirectly: false),
                   ),
-                  ambientScaling: conf.blocksRenderDirectly,
                 ),
+              ),
+              ambientScaling: conf.blocksRenderDirectly,
+            ),
           );
           return RevealableSpan(
             content: content!,
@@ -227,16 +262,15 @@ class PlusparseRenderer {
         return [
           _revealableBlock(
             content: labelSpans,
-            wrap:
-                (transform) => checkboxWidget(
-                  context,
-                  config,
-                  checked: checked,
-                  label: config.getRich(
-                    TextSpan(children: transform(labelSpans)),
-                    ambientScaling: config.blocksRenderDirectly,
-                  ),
-                ),
+            wrap: (transform) => checkboxWidget(
+              context,
+              config,
+              checked: checked,
+              label: config.getRich(
+                TextSpan(children: transform(labelSpans)),
+                ambientScaling: config.blocksRenderDirectly,
+              ),
+            ),
           ),
         ];
       case MdRadio(:final selected, :final children):
@@ -244,22 +278,37 @@ class PlusparseRenderer {
         return [
           _revealableBlock(
             content: labelSpans,
-            wrap:
-                (transform) => radioWidget(
-                  context,
-                  config,
-                  selected: selected,
-                  label: config.getRich(
-                    TextSpan(children: transform(labelSpans)),
-                    ambientScaling: config.blocksRenderDirectly,
-                  ),
-                ),
+            wrap: (transform) => radioWidget(
+              context,
+              config,
+              selected: selected,
+              label: config.getRich(
+                TextSpan(children: transform(labelSpans)),
+                ambientScaling: config.blocksRenderDirectly,
+              ),
+            ),
           ),
         ];
       case MdUnorderedList(:final items):
         return _list(context, items, config, ordered: false, start: 1);
       case MdOrderedList(:final start, :final items):
         return _list(context, items, config, ordered: true, start: start);
+      case MdFootnoteDefinitions(:final footnotes):
+        // A numbered list whose numbers are the footnotes' own, so a
+        // definition renders under the number its references show.
+        return _list(
+          context,
+          [
+            for (final footnote in footnotes)
+              MdListItem(
+                children: _unwrapLeadingParagraph(footnote.children),
+                number: footnote.number,
+              ),
+          ],
+          config,
+          ordered: true,
+          start: footnotes.first.number,
+        );
       case MdTable():
         return [_table(context, node, config)];
       // Inline nodes reaching block position (defensive; parser does not
@@ -328,8 +377,18 @@ class PlusparseRenderer {
     return spans;
   }
 
+  /// [blocks] with a leading paragraph's inline content lifted out, which is
+  /// the shape a list item's children take: inline content, then blocks.
+  static List<MdNode> _unwrapLeadingParagraph(List<MdNode> blocks) {
+    if (blocks.isNotEmpty && blocks.first is MdParagraph) {
+      return [...(blocks.first as MdParagraph).children, ...blocks.skip(1)];
+    }
+    return blocks;
+  }
+
   static bool _isInline(MdNode n) => switch (n) {
     MdText() ||
+    MdFootnoteReference() ||
     MdBold() ||
     MdItalic() ||
     MdStrike() ||
@@ -340,6 +399,8 @@ class PlusparseRenderer {
     MdImage() ||
     MdSourceTag() ||
     MdLineBreak() => true,
+    MdSuperscript() || MdSubscript() || MdHighlight() => true,
+    MdCustomBlock(:final HtmlElementData data) => !data.block,
     _ => false,
   };
 
@@ -376,10 +437,10 @@ class PlusparseRenderer {
     final ambientAlign = config.textAlign;
     final leftConfig =
         (ambientAlign == null ||
-                ambientAlign == TextAlign.left ||
-                ambientAlign == TextAlign.start)
-            ? config
-            : config.copyWith(textAlign: TextAlign.left);
+            ambientAlign == TextAlign.left ||
+            ambientAlign == TextAlign.start)
+        ? config
+        : config.copyWith(textAlign: TextAlign.left);
 
     final tableBuilder = config.tableBuilder;
     if (tableBuilder != null) {
@@ -387,10 +448,9 @@ class PlusparseRenderer {
         final row = rows[index];
         final fields = List<CustomTableField>.generate(maxCol, (col) {
           return CustomTableField(
-            data:
-                col < row.cells.length
-                    ? _plainText(row.cells[col].content)
-                    : "",
+            data: col < row.cells.length
+                ? _plainText(row.cells[col].content)
+                : "",
             alignment: columnAlignments[col],
           );
         });
@@ -406,26 +466,27 @@ class PlusparseRenderer {
       );
     }
 
-    final tableStyle = (resolvedStyleSheet(context, config).table ??
-            const TableStyle())
-        .resolve(Theme.of(context).colorScheme);
+    final tableStyle =
+        (resolvedStyleSheet(context, config).table ?? const TableStyle())
+            .resolve(Theme.of(context).colorScheme);
     final tableRadius = tableStyle.borderRadius;
     return _blockSpan(
       _TableViewport(
+        overflow: tableStyle.overflow ?? TableOverflow.scroll,
         child: Table(
           textDirection: config.textDirection,
           defaultColumnWidth:
-              tableStyle.columnWidth ?? const CustomTableColumnWidth(),
+              tableStyle.columnWidth ??
+              _defaultTableColumnWidth(tableStyle.overflow, maxCol),
           defaultVerticalAlignment: TableCellVerticalAlignment.middle,
           border: TableBorder.all(
             width: tableStyle.borderWidth ?? 1,
             color:
                 tableStyle.borderColor ??
                 Theme.of(context).colorScheme.onSurface,
-            borderRadius:
-                tableRadius == null
-                    ? BorderRadius.zero
-                    : BorderRadius.all(tableRadius),
+            borderRadius: tableRadius == null
+                ? BorderRadius.zero
+                : BorderRadius.all(tableRadius),
           ),
           children: List<TableRow>.generate(rows.length, (index) {
             final row = rows[index];
@@ -434,27 +495,23 @@ class PlusparseRenderer {
             // first row under it is always unstriped.
             final stripe = tableStyle.rowStripeColor;
             return TableRow(
-              decoration:
-                  isHeader
-                      ? BoxDecoration(
-                        color:
-                            tableStyle.headerBackground ??
-                            Theme.of(
-                              context,
-                            ).colorScheme.surfaceContainerHighest,
-                      )
-                      : (stripe != null && index.isEven)
-                      ? BoxDecoration(color: stripe)
-                      : null,
+              decoration: isHeader
+                  ? BoxDecoration(
+                      color:
+                          tableStyle.headerBackground ??
+                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                    )
+                  : (stripe != null && index.isEven)
+                  ? BoxDecoration(color: stripe)
+                  : null,
               children: List<Widget>.generate(maxCol, (col) {
                 final cell = col < row.cells.length ? row.cells[col] : null;
                 if (cell == null || cell.content.isEmpty) {
                   return const SizedBox();
                 }
-                final cellConfig =
-                    columnAlignments[col] == TextAlign.left
-                        ? leftConfig
-                        : config;
+                final cellConfig = columnAlignments[col] == TextAlign.left
+                    ? leftConfig
+                    : config;
                 Widget content = Padding(
                   padding:
                       tableStyle.cellPadding ??
@@ -510,14 +567,17 @@ class PlusparseRenderer {
   // Inline level
   // ---------------------------------------------------------------------
 
+  /// [linkTap] is set while rendering a link's label: the tap the link
+  /// follows, which an image in the label takes as its own.
   static List<InlineSpan> _inlineSpans(
     BuildContext context,
     List<MdNode> nodes,
-    GptMarkdownConfig config,
-  ) {
+    GptMarkdownConfig config, {
+    VoidCallback? linkTap,
+  }) {
     final spans = <InlineSpan>[];
     for (final node in nodes) {
-      spans.add(_inline(context, node, config));
+      spans.add(_inline(context, node, config, linkTap: linkTap));
     }
     return spans;
   }
@@ -567,10 +627,12 @@ class PlusparseRenderer {
     return withPatterns(text);
   }
 
-  /// Autolinks one run of plain text.
+  /// Autolinks one run of plain text, and claims any inline pattern masking
+  /// could not reach.
   ///
-  /// Patterns have already been expanded by the caller, so the only
-  /// consumer-facing syntax left here is autolinking.
+  /// Masked pattern matches have already been expanded by the caller. What is
+  /// left is autolinking, plus a pattern that only matches the parsed run and
+  /// never the source — see the comment in the body.
   ///
   /// This was the last thing on the plusparse path that ran the legacy
   /// combined regex, and it was the most expensive: the autolink pattern is a
@@ -584,9 +646,6 @@ class PlusparseRenderer {
     String text,
     GptMarkdownConfig config,
   ) {
-    if (!config.autolink) {
-      return [TextSpan(text: text, style: config.style)];
-    }
     final patterns = config.inlinePatterns;
     if (patterns != null && patterns.isNotEmpty) {
       // Not the scanner: a pattern and an autolink decide precedence between
@@ -600,12 +659,21 @@ class PlusparseRenderer {
       // `b` that `a**b**c` parses to and never matches the source, so this
       // dispatch is what renders it. `test/regression/autolink_parity_test`
       // pins that case.
+      //
+      // So it runs whether or not autolinking is on. It used to sit behind
+      // the `autolink` check, and with `autolink: false` a mention inside
+      // bold — `**@alice**` — stayed raw text.
       return MarkdownComponent.generate(
         context,
         text,
-        config.copyWith(inlineComponents: [AutolinkMd()]),
+        config.copyWith(
+          inlineComponents: config.autolink ? [AutolinkMd()] : const [],
+        ),
         false,
       );
+    }
+    if (!config.autolink) {
+      return [TextSpan(text: text, style: config.style)];
     }
     return autolinkSpans(context, text, config);
   }
@@ -613,20 +681,35 @@ class PlusparseRenderer {
   static InlineSpan _inline(
     BuildContext context,
     MdNode node,
-    GptMarkdownConfig config,
-  ) {
-    // Contexts a placeholder must not appear in. A link label is already
-    // rendered inside the link's own `WidgetSpan`, and a second one nested in
-    // it does not paint on iOS.
+    GptMarkdownConfig config, {
+    VoidCallback? linkTap,
+  }) {
     if (config.scope == MarkdownScope.linkLabel) {
       switch (node) {
-        case MdImage(:final alt, :final url):
+        // `[![badge](src)](url)`: the image renders, and tapping it follows
+        // the link. A link label is styled text, so the image is one ordinary
+        // placeholder in it.
+        //
+        // Except under the deprecated `linkBuilder`, which still draws the
+        // whole link as a widget: a placeholder nested inside that one does
+        // not paint on iOS, so the image stays its source text there.
+        // ignore: deprecated_member_use_from_same_package
+        case MdImage(:final alt, :final url) when config.linkBuilder != null:
           return TextSpan(text: '![$alt]($url)', style: config.style);
+        case MdImage(:final url, :final width, :final height):
+          return imageSpan(
+            context,
+            config,
+            url: url,
+            width: width,
+            height: height,
+            onTap: linkTap,
+          );
         case MdLink(:final children):
           // CommonMark forbids a link inside a link label; render the label's
           // own content and drop the nested link.
           return TextSpan(
-            children: _inlineSpans(context, children, config),
+            children: _inlineSpans(context, children, config, linkTap: linkTap),
             style: config.style,
           );
         default:
@@ -649,7 +732,7 @@ class PlusparseRenderer {
               const TextStyle(fontWeight: FontWeight.bold),
         );
         return TextSpan(
-          children: _inlineSpans(context, children, conf),
+          children: _inlineSpans(context, children, conf, linkTap: linkTap),
           style: conf.style,
         );
       case MdItalic(:final children):
@@ -659,7 +742,7 @@ class PlusparseRenderer {
           ),
         );
         return TextSpan(
-          children: _inlineSpans(context, children, conf),
+          children: _inlineSpans(context, children, conf, linkTap: linkTap),
           style: conf.style,
         );
       case MdStrike(:final children):
@@ -672,7 +755,7 @@ class PlusparseRenderer {
               const TextStyle(decoration: TextDecoration.lineThrough),
         );
         return TextSpan(
-          children: _inlineSpans(context, children, conf),
+          children: _inlineSpans(context, children, conf, linkTap: linkTap),
           style: conf.style,
         );
       case MdUnderline(:final children):
@@ -683,16 +766,27 @@ class PlusparseRenderer {
           ),
         );
         return TextSpan(
-          children: _inlineSpans(context, children, conf),
+          children: _inlineSpans(context, children, conf, linkTap: linkTap),
           style: conf.style,
         );
       case MdInlineCode(:final text):
         return inlineCodeSpan(context, text, config);
       case MdInlineLatex(:final tex):
-        return WidgetSpan(
-          alignment: PlaceholderAlignment.baseline,
-          baseline: TextBaseline.alphabetic,
-          child: latexWidget(context, config, tex: tex, inline: true),
+        return _latexSpan(
+          context,
+          config,
+          tex: tex,
+          placeholder: (child) => WidgetSpan(
+            alignment: PlaceholderAlignment.baseline,
+            baseline: TextBaseline.alphabetic,
+            child: child,
+          ),
+        );
+      case MdLink(autolink: true, :final children) when !config.autolink:
+        // `autolink: false` turns `<https://…>` off too: it reads as written.
+        return TextSpan(
+          children: _textSpans(context, '<${_plainText(children)}>', config),
+          style: config.style,
         );
       case MdLink(:final children, :final url):
         return _link(context, children, url, config);
@@ -704,8 +798,32 @@ class PlusparseRenderer {
           width: width,
           height: height,
         );
-      case MdSourceTag(:final id):
-        return sourceTagSpan(context, id, config);
+      case MdSourceTag(:final id, :final url):
+        return sourceTagSpan(context, id, config, url: url);
+      case MdFootnoteReference(:final number):
+        return _footnoteReference(context, number, config);
+      case MdSuperscript(:final children):
+        return _script(context, children, config, raised: true);
+      case MdSubscript(:final children):
+        return _script(context, children, config, raised: false);
+      case MdHighlight(:final children):
+        final highlight =
+            (resolvedStyleSheet(context, config).highlight ??
+                    const HighlightStyle())
+                .resolve(Theme.of(context).colorScheme);
+        final conf = config.copyWith(
+          style: (config.style ?? const TextStyle()).copyWith(
+            backgroundColor: highlight.backgroundColor,
+            color: highlight.color,
+          ),
+        );
+        return TextSpan(
+          children: _inlineSpans(context, children, conf, linkTap: linkTap),
+          style: conf.style,
+        );
+      case MdCustomBlock(:final HtmlElementData data)
+          when node.type == htmlElementType:
+        return _htmlInline(context, node, data, config);
       // Block nodes in inline position (nested content) fall back to their
       // block rendering.
       default:
@@ -714,19 +832,198 @@ class PlusparseRenderer {
     }
   }
 
+  /// Superscript ([raised]) or subscript text: smaller, and set above or
+  /// below the line, as [ScriptStyle] says.
+  static InlineSpan _script(
+    BuildContext context,
+    List<MdNode> children,
+    GptMarkdownConfig config, {
+    required bool raised,
+  }) {
+    final script =
+        resolvedStyleSheet(context, config).script ?? const ScriptStyle();
+    final style = config.style ?? const TextStyle();
+    final conf = config.copyWith(
+      style: style.copyWith(
+        fontSize:
+            (style.fontSize ?? 14) * (script.scale ?? ScriptStyle.defaultScale),
+        color: script.color ?? style.color,
+      ),
+    );
+    return scaledWidgetSpan(
+      config: config,
+      alignment: raised
+          ? PlaceholderAlignment.top
+          : PlaceholderAlignment.bottom,
+      baseline: null,
+      child: conf.getRich(
+        TextSpan(
+          children: _inlineSpans(context, children, conf),
+          style: conf.style,
+        ),
+      ),
+    );
+  }
+
+  /// A footnote reference: its number, small and raised, in the link colour.
+  static InlineSpan _footnoteReference(
+    BuildContext context,
+    int number,
+    GptMarkdownConfig config,
+  ) {
+    final style = config.style ?? const TextStyle();
+    return scaledWidgetSpan(
+      config: config,
+      alignment: PlaceholderAlignment.top,
+      baseline: null,
+      child: Text(
+        '$number',
+        style: style.copyWith(
+          fontSize: (style.fontSize ?? 14) * 0.75,
+          color: Theme.of(context).colorScheme.primary,
+        ),
+        textDirection: config.textDirection,
+      ),
+    );
+  }
+
   static InlineSpan _link(
     BuildContext context,
     List<MdNode> children,
     String url,
     GptMarkdownConfig config,
   ) {
+    final label = _plainText(children);
+    final onLinkTap = config.onLinkTap;
     return buildLinkSpan(
       context,
       config,
       url: url,
-      label: _plainText(children),
-      buildLabelSpans: (conf) => _inlineSpans(context, children, conf),
+      label: label,
+      buildLabelSpans: (conf) => _inlineSpans(
+        context,
+        children,
+        conf,
+        // The same call the link's own text makes when tapped.
+        linkTap: onLinkTap == null ? null : () => onLinkTap(url, label),
+      ),
     );
+  }
+
+  // ---------------------------------------------------------------------
+  // HTML elements
+  // ---------------------------------------------------------------------
+
+  static HtmlElementDetails _htmlDetails(
+    BuildContext context,
+    MdCustomBlock node,
+    HtmlElementData data,
+    GptMarkdownConfig config,
+  ) => HtmlElementDetails(
+    node: node,
+    data: data,
+    style: config.style ?? DefaultTextStyle.of(context).style,
+    config: config,
+    buildInline: (nodes) => _anySpans(context, nodes, config),
+    buildBlocks: (nodes) => config.getRich(
+      TextSpan(
+        children: _anySpans(
+          context,
+          nodes,
+          config.copyWith(blocksRenderDirectly: false),
+        ),
+      ),
+      ambientScaling: config.blocksRenderDirectly,
+    ),
+  );
+
+  /// [nodes] as spans, whether they are blocks or inline content.
+  static List<InlineSpan> _anySpans(
+    BuildContext context,
+    List<MdNode> nodes,
+    GptMarkdownConfig config,
+  ) => nodes.isNotEmpty && nodes.every(_isInline)
+      ? _inlineSpans(context, nodes, config)
+      : _blockSpans(context, nodes, config);
+
+  /// An element inside a line: its inline builder, else its block builder's
+  /// widget in the line, else its content in place.
+  static InlineSpan _htmlInline(
+    BuildContext context,
+    MdCustomBlock node,
+    HtmlElementData data,
+    GptMarkdownConfig config,
+  ) {
+    final tag = config.htmlTags?[data.name];
+    final inline = tag?.inlineBuilder;
+    if (inline != null) {
+      return inline(context, _htmlDetails(context, node, data, config));
+    }
+    final block = tag?.blockBuilder;
+    if (block != null) {
+      return WidgetSpan(
+        alignment: PlaceholderAlignment.middle,
+        child: block(context, _htmlDetails(context, node, data, config)),
+      );
+    }
+    if (config.markdownHtml[data.name]?.kind == HtmlTagKind.svg) {
+      return WidgetSpan(
+        alignment: PlaceholderAlignment.middle,
+        child: _svg(context, node, data, config),
+      );
+    }
+    if (data.children.isEmpty) {
+      return TextSpan(text: data.source, style: config.style);
+    }
+    return TextSpan(
+      children: _inlineSpans(context, data.children, config),
+      style: config.style,
+    );
+  }
+
+  /// An `<svg>` element drawn as a picture, its `currentColor` the text's.
+  static Widget _svg(
+    BuildContext context,
+    MdCustomBlock node,
+    HtmlElementData data,
+    GptMarkdownConfig config,
+  ) => inlineSvg(
+    attributes: data.attributes,
+    markup: data.source,
+    closed: node.closed,
+    currentColor:
+        config.style?.color ?? DefaultTextStyle.of(context).style.color,
+    error: (context) => const CustomImageError(),
+  );
+
+  /// An element standing as a block: its block builder, else its content in
+  /// place.
+  static List<InlineSpan> _htmlBlock(
+    BuildContext context,
+    MdCustomBlock node,
+    HtmlElementData data,
+    GptMarkdownConfig config,
+  ) {
+    final builder = config.htmlTags?[data.name]?.blockBuilder;
+    if (builder != null) {
+      return [
+        _blockSpan(builder(context, _htmlDetails(context, node, data, config))),
+      ];
+    }
+    switch (config.markdownHtml[data.name]?.kind) {
+      case HtmlTagKind.table:
+        return _htmlTableSpans(context, data, config);
+      case HtmlTagKind.svg:
+        return [_blockSpan(_svg(context, node, data, config))];
+      default:
+        break;
+    }
+    if (data.children.isEmpty) {
+      return data.source.trim().isEmpty
+          ? const []
+          : [TextSpan(text: data.source, style: config.style)];
+    }
+    return _blockSpans(context, data.children, config);
   }
 
   static String _plainText(List<MdNode> nodes) {
@@ -741,12 +1038,25 @@ class PlusparseRenderer {
           out.write(tex);
         case MdSourceTag(:final id):
           out.write(id);
+        // An image's text is its alt, as a browser reads it — so a badge link
+        // reports `build passing`, not an empty label.
+        case MdImage(:final alt):
+          out.write(alt);
+        case MdFootnoteReference(:final number):
+          out.write(number);
         case MdBold(:final children):
         case MdItalic(:final children):
         case MdStrike(:final children):
         case MdUnderline(:final children):
         case MdLink(:final children, url: _):
+        case MdSuperscript(:final children):
+        case MdSubscript(:final children):
+        case MdHighlight(:final children):
           out.write(_plainText(children));
+        case MdCustomBlock(:final HtmlElementData data):
+          out.write(
+            data.children.isEmpty ? data.source : _plainText(data.children),
+          );
         default:
           break;
       }

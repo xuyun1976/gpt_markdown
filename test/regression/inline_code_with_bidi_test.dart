@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gpt_markdown/custom_widgets/bidi_rich_text.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
@@ -28,12 +28,11 @@ Widget _app(
               style: const TextStyle(fontSize: 10),
               useDollarSignsForLatex: true,
               textDirection: direction,
-              latexBuilder:
-                  (context, tex, style, inline) => SizedBox(
-                    key: ValueKey('tex:$tex'),
-                    width: _mathWidths[tex] ?? 50,
-                    height: 10,
-                  ),
+              latexBuilder: (context, tex, style, inline) => SizedBox(
+                key: ValueKey('tex:$tex'),
+                width: _mathWidths[tex] ?? 50,
+                height: 10,
+              ),
             ),
           ),
         ),

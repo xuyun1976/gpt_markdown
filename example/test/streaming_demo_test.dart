@@ -1,5 +1,5 @@
 import 'package:example/streaming_demo.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
 
@@ -19,8 +19,11 @@ void main() {
     await tester.pump();
     expect(find.textContaining('streaming'), findsOneWidget);
 
-    // Let the simulated model run to the end.
-    await tester.pump(const Duration(seconds: 20));
+    // Let the simulated model run to the end: it emits 120 characters a
+    // second by default.
+    await tester.pump(
+      Duration(seconds: (streamingReply.length / 120).ceil() + 2),
+    );
     await tester.pumpAndSettle();
     while (tester.takeException() != null) {}
     expect(find.textContaining('idle'), findsOneWidget);

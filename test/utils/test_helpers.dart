@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gpt_markdown/custom_widgets/code_field.dart';
 import 'package:gpt_markdown/custom_widgets/custom_divider.dart';
@@ -108,8 +108,8 @@ String getSerializedOutput(WidgetTester tester) {
 
 /// A block the serializer renders whole, whose subtree must not be walked.
 bool _isOpaqueBlock(Widget widget) =>
-    // Rendered maths, matched by type name because `flutter_math_fork`'s type
-    // is not importable here — the same heuristic the serializer itself uses.
+    // Rendered maths, matched by type name — the same heuristic the
+    // serializer itself uses.
     // Descending would report each glyph of an equation as its own run.
     widget.runtimeType.toString().contains('Math') ||
     widget is SelectableAdapter ||

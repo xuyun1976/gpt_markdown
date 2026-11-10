@@ -27,8 +27,10 @@ in. See [getting started](getting-started.md).
 |---|---|---|
 | `useDollarSignsForLatex` | `false` | Enables `$…$` and `$$…$$` maths parsing |
 | `latexWorkaround` | none | Transforms TeX immediately before rendering |
-| `autolink` | `true` | Enables bare URL, host and email autolinking |
+| `autolink` | `true` | Enables bare URL, host and email autolinking, and `<https://…>` links |
 | `autolinkSchemes` | empty set | Additional schemes accepted as bare links |
+| `html` | `true` | Whether HTML tags are understood; off, every tag is shown as written |
+| `htmlTags` | `null` | Tags added to or overridden in the built-in table — [HTML tags](custom-components.md#html-tags) |
 | `inlineDirectives` | none | Protects delimited host data from Markdown parsing |
 | `inlinePatterns` | none | Adds consumer-defined inline tokens to both parser paths |
 | `blockComponents` | none | Adds new block syntax while staying on plusparse |
@@ -84,6 +86,8 @@ The incremental segment cache applies with `animation: none` as well;
 
 Use `GptMarkdownThemeData` for app-wide defaults and `styleSheet` for one
 widget. Widget fields win over theme fields one property at a time.
+`styleSheet.blockSpacing` sets the gap between blocks; see
+[spacing between blocks](customization.md#spacing-between-blocks).
 `followLinkColor` is plumbed as far as the render config and then read by
 nothing, so a link label paints the same whichever value you pass; set
 `LinkStyle` on the style sheet instead. See
@@ -97,13 +101,16 @@ Builders replace structure. All are optional:
 |---|---|
 | `headingBuilder` | A heading and its optional divider |
 | `blockQuoteBuilder` | A block quote |
+| `alertBuilder` | An alert (`> [!NOTE]` and the other markers) |
 | `checkboxBuilder` | A task-list row |
 | `radioOptionBuilder` | A radio-option row |
 | `hrBuilder` | A horizontal rule |
 | `codeBuilder` | A fenced code block |
 | `tableBuilder` | A table |
 | `imageBuilder` | An image |
-| `latexBuilder` | Inline or block TeX |
+| `inlineLatexBuilder` | An inline formula, as a span |
+| `blockLatexBuilder` | A block formula, as a widget |
+| `latexBuilder` | *Deprecated.* Inline or block TeX, as a widget |
 | `inlineLinkBuilder` | A Markdown or automatic link, as a span |
 | `linkBuilder` | *Deprecated.* A link, as a widget |
 | `inlineCodeBuilder` | The span for inline code |
@@ -127,7 +134,8 @@ in [customization](customization.md#builders).
 | Option | Called when |
 |---|---|
 | `onLinkTap` | A link is activated; receives URL and label |
-| `onImageTap` | An image is activated |
+| `onImageTap` | An image is activated — except an image that is a link's label (`[![alt](src)](url)`), which calls `onLinkTap` with the URL and alt text |
+| `onLatexTap` | A formula is tapped; receives the formula and the part tapped |
 | `onCodeCopy` | The built-in code copy action succeeds |
 | `onSourceTagTap` | A citation/source tag is activated |
 | `onCheckboxChanged` | An interactive task checkbox changes |

@@ -10,7 +10,7 @@
 /// a press that began, and ended, on `b`.
 library;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gpt_markdown/custom_widgets/bidi_rich_text.dart';
@@ -25,23 +25,22 @@ void main() {
     final log = <String>[];
     const linkStyle = LinkStyle();
 
-    InlineSpan linkA({required bool split}) =>
-        split
-            ? LinkTextSpan.wrapping(
-              url: 'a',
-              linkStyle: linkStyle,
-              onTap: () => log.add('a'),
-              children: const <InlineSpan>[
-                TextSpan(text: 'A'),
-                TextSpan(text: 'A'),
-              ],
-            )
-            : LinkTextSpan(
-              text: 'AA',
-              url: 'a',
-              linkStyle: linkStyle,
-              onTap: () => log.add('a'),
-            );
+    InlineSpan linkA({required bool split}) => split
+        ? LinkTextSpan.wrapping(
+            url: 'a',
+            linkStyle: linkStyle,
+            onTap: () => log.add('a'),
+            children: const <InlineSpan>[
+              TextSpan(text: 'A'),
+              TextSpan(text: 'A'),
+            ],
+          )
+        : LinkTextSpan(
+            text: 'AA',
+            url: 'a',
+            linkStyle: linkStyle,
+            onTap: () => log.add('a'),
+          );
 
     InlineSpan doc({required bool split}) => TextSpan(
       children: <InlineSpan>[
@@ -78,12 +77,11 @@ void main() {
     final rich = tester.renderObject<RenderParagraph>(richFinder().first);
     final plain = rich.text.toPlainText();
     final start = plain.indexOf('BB');
-    final box =
-        rich
-            .getBoxesForSelection(
-              TextSelection(baseOffset: start, extentOffset: start + 2),
-            )
-            .first;
+    final box = rich
+        .getBoxesForSelection(
+          TextSelection(baseOffset: start, extentOffset: start + 2),
+        )
+        .first;
     final topLeft = tester.getTopLeft(richFinder().first);
     final centre =
         topLeft +

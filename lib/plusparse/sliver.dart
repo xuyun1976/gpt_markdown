@@ -34,6 +34,10 @@ class _SliverGptMarkdownState extends State<SliverGptMarkdown> {
   String _source = '';
   List<String> _sources = const [];
 
+  /// Collected from the whole document: each segment renders in its own view,
+  /// and a reference in one must find a definition in another.
+  MarkdownDefinitions _definitions = MarkdownDefinitions.empty;
+
   @override
   void initState() {
     super.initState();
@@ -52,16 +56,15 @@ class _SliverGptMarkdownState extends State<SliverGptMarkdown> {
 
   void _updateSource() {
     final config = widget.config;
-    _source =
-        _normalizeMarkdownSource(
-          widget.data,
-          widget.useDollarSignsForLatex,
-          config.inlineDirectives,
-          blockRegistry:
-              config.components == null && config.inlineComponents == null
-                  ? config.blockRegistry
-                  : null,
-        ).text;
+    _source = _normalizeMarkdownSource(
+      widget.data,
+      widget.useDollarSignsForLatex,
+      config.inlineDirectives,
+      blockRegistry:
+          config.components == null && config.inlineComponents == null
+          ? config.blockRegistry
+          : null,
+    ).text;
     // Legacy inline patterns match original source, not the modern parser's
     // masked tokens. Do not mask or invoke modern syntaxes on this route.
     if (config.components != null || config.inlineComponents != null) return;
@@ -73,7 +76,40 @@ class _SliverGptMarkdownState extends State<SliverGptMarkdown> {
         blockRegistry: config.blockRegistry,
       );
     }
-    _sources = _segments.update(_source, blockRegistry: config.blockRegistry);
+    final definitions = MarkdownDefinitions.collect(
+      _source,
+      blockRegistry: config.blockRegistry,
+      html: config.markdownHtml,
+    );
+    // Kept by identity when unchanged, so no segment view re-prepares.
+    if (definitions != _definitions) {
+      _definitions = definitions;
+    }
+    // A segment that renders nothing — only reference definitions, an HTML
+    // comment, a hidden `<script>`, a lone `<div>` — gets no row, so it adds
+    // no gap. Only a segment opening with `[` or `<` can be one, so only
+    // those are parsed to find out.
+    _sources = [
+      for (final segment in _segments.update(
+        _source,
+        blockRegistry: config.blockRegistry,
+        html: config.markdownHtml,
+      ))
+        if (!_rendersNothing(segment, config)) segment,
+    ];
+  }
+
+  bool _rendersNothing(String segment, GptMarkdownConfig config) {
+    final start = segment.trimLeft();
+    if (!start.startsWith('[') && !start.startsWith('<')) {
+      return false;
+    }
+    return Plusparse.parse(
+      segment,
+      blockRegistry: config.blockRegistry,
+      definitions: _definitions,
+      html: config.markdownHtml,
+    ).children.isEmpty;
   }
 
   @override
@@ -90,7 +126,11 @@ class _SliverGptMarkdownState extends State<SliverGptMarkdown> {
         delegate: SliverChildBuilderDelegate(
           (context, index) => Padding(
             padding: EdgeInsets.only(top: index == 0 ? 0 : gap),
-            child: _IncrementalMdView(text: _sources[index], config: config),
+            child: _IncrementalMdView(
+              text: _sources[index],
+              config: config,
+              definitions: _definitions,
+            ),
           ),
           childCount: _sources.length,
         ),
@@ -104,8 +144,8 @@ class _SliverGptMarkdownState extends State<SliverGptMarkdown> {
     return scaler == null
         ? directed
         : MediaQuery(
-          data: MediaQuery.of(context).copyWith(textScaler: scaler),
-          child: directed,
-        );
+            data: MediaQuery.of(context).copyWith(textScaler: scaler),
+            child: directed,
+          );
   }
 }

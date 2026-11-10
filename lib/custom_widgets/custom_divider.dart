@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// A custom divider widget that extends LeafRenderObjectWidget.
 ///
@@ -111,6 +111,24 @@ class RenderDivider extends RenderBox {
     final double h = constraints.constrainHeight(_padding.vertical + _height);
     return Size(w, h);
   }
+
+  // Width intrinsics stay at the default zero: a rule stretches to the width
+  // it is given and should not widen an `IntrinsicWidth` around it.
+
+  @override
+  double computeMinIntrinsicHeight(double width) => _padding.vertical + _height;
+
+  @override
+  double computeMaxIntrinsicHeight(double width) => _padding.vertical + _height;
+
+  /// A rule has no text baseline, as in [performLayout]. Without this override
+  /// a dry layout of the paragraph holding it asserts under `IntrinsicWidth`
+  /// and `IntrinsicHeight` (#107).
+  @override
+  double? computeDryBaseline(
+    BoxConstraints constraints,
+    TextBaseline baseline,
+  ) => null;
 
   @override
   void performLayout() {

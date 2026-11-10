@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:gpt_markdown/custom_widgets/code_field.dart';
 import 'package:gpt_markdown/custom_widgets/custom_divider.dart';
 import 'package:gpt_markdown/custom_widgets/custom_rb_cb.dart';
@@ -261,8 +261,9 @@ class MarkdownSerializer {
 
     // Link button
     if (widget is LinkButton) {
-      final urlPart =
-          widget.url != null ? ', url="${_escapeText(widget.url!)}"' : '';
+      final urlPart = widget.url != null
+          ? ', url="${_escapeText(widget.url!)}"'
+          : '';
       _write('LINK("${_escapeText(widget.text)}"$urlPart)');
       return;
     }
@@ -347,8 +348,7 @@ class MarkdownSerializer {
       return;
     }
 
-    // LaTeX - Math widget from flutter_math_fork
-    // We detect it by checking the widget type name since we can't import the type
+    // LaTeX - the Math widget from val_latex_flutter, detected by type name
     final typeName = widget.runtimeType.toString();
     if (typeName.contains('Math') || typeName.contains('Tex')) {
       // For LaTeX, we'll mark it as such - the actual content is harder to extract

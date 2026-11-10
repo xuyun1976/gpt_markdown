@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gpt_markdown/custom_widgets/custom_divider.dart';
 import 'package:gpt_markdown/custom_widgets/custom_rb_cb.dart';
@@ -27,7 +27,12 @@ void main() {
         headingBuilder: (context, level, content, style) {
           seenLevel = level;
           seenStyle = style;
-          return Row(children: [const Text('H!'), Flexible(child: content)]);
+          return Row(
+            children: [
+              const Text('H!'),
+              Flexible(child: content),
+            ],
+          );
         },
       ),
     );
@@ -69,7 +74,12 @@ void main() {
         checkboxBuilder: (context, checked, content, style) {
           seenChecked = checked;
           seenStyle = style;
-          return Row(children: [const Text('CB'), Flexible(child: content)]);
+          return Row(
+            children: [
+              const Text('CB'),
+              Flexible(child: content),
+            ],
+          );
         },
       ),
     );
@@ -89,7 +99,12 @@ void main() {
         '(x) chosen',
         radioOptionBuilder: (context, selected, content, style) {
           seenSelected = selected;
-          return Row(children: [const Text('RB'), Flexible(child: content)]);
+          return Row(
+            children: [
+              const Text('RB'),
+              Flexible(child: content),
+            ],
+          );
         },
       ),
     );
@@ -125,9 +140,12 @@ void main() {
       '',
       GptMarkdown(
         '> quoted',
-        blockQuoteBuilder:
-            (context, content, style) =>
-                Row(children: [const Text('BQ'), Flexible(child: content)]),
+        blockQuoteBuilder: (context, content, style) => Row(
+          children: [
+            const Text('BQ'),
+            Flexible(child: content),
+          ],
+        ),
       ),
     );
 

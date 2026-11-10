@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'style_lerp.dart';
 
 /// How a fenced code block is drawn.
@@ -206,8 +206,9 @@ class CodeBlockStyle {
       showCopyButton: t < 0.5 ? a.showCopyButton : b.showCopyButton,
       copyLabel: t < 0.5 ? a.copyLabel : b.copyLabel,
       copiedLabel: t < 0.5 ? a.copiedLabel : b.copiedLabel,
-      highlightWhileStreaming:
-          t < 0.5 ? a.highlightWhileStreaming : b.highlightWhileStreaming,
+      highlightWhileStreaming: t < 0.5
+          ? a.highlightWhileStreaming
+          : b.highlightWhileStreaming,
     );
   }
 

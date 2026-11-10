@@ -161,8 +161,8 @@ with the whole message.
 | `GptMarkdownAnimation.none` | Shows content immediately; no reveal ticker |
 | `.typewriter` | Reveals paced characters at their final appearance |
 | `.fade` | Fades newly revealed text from transparent |
-| `.blurIn` | Resolves new text out of a blur while fading in |
-| `.wave` | Sends an accent-colour crest across new characters |
+| `.blurIn` | Resolves new text out of a blur while fading in; the blur scales with the font size |
+| `.wave` | Sends a vivid crest in the hue of the theme's `ColorScheme.primary` across new characters |
 
 `typewriter` controls only visibility and pacing. `fade` and `blurIn` style
 word-sized runs to preserve shaping, kerning and stable wrapping. `wave` is the
@@ -229,10 +229,18 @@ through the reveal.
 
 The reveal holds unfinished inline Markdown briefly so readers do not see text
 change style after it has appeared. This applies to constructs such as bold,
-inline code, links and inline maths. An open fenced-code block continues to
-stream as code, while incomplete block maths waits for its closing delimiter.
+inline code and links. An open fenced-code block continues to stream as code.
 The hold releases after a quiet period so a genuinely unmatched delimiter
 cannot hide the end of a response forever.
+
+Maths streams as it arrives. An open formula — `\(`, `\[`, and `$`/`$$` with
+`useDollarSignsForLatex` — renders as far as it has come and grows with each
+chunk, inline or as a block, instead of appearing whole when its closing
+delimiter lands. A command name still being typed (`\fra` on its way to
+`\frac`) is held back for the chunk or two it takes to finish, so raw TeX never
+shows. This applies only to text that grows while the widget is mounted: a
+finished reply with a stray `\(` or an unpaired `$` is text: the `$` as
+written, and `\(` as the escaped bracket `(` CommonMark makes it.
 
 ## Why `isStreaming` matters
 

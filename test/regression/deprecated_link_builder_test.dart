@@ -1,6 +1,6 @@
 // ignore_for_file: deprecated_member_use_from_same_package
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gpt_markdown/custom_widgets/link_button.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
@@ -40,9 +40,8 @@ void main() {
   testWidgets('the legacy builder still renders its widget', (tester) async {
     await pump(
       tester,
-      linkBuilder:
-          (context, text, url, style) =>
-              Text('LEGACY', key: const Key('legacy')),
+      linkBuilder: (context, text, url, style) =>
+          Text('LEGACY', key: const Key('legacy')),
     );
 
     expect(find.byKey(const Key('legacy')), findsOneWidget);
@@ -54,9 +53,8 @@ void main() {
     final tapped = <String>[];
     await pump(
       tester,
-      linkBuilder:
-          (context, text, url, style) =>
-              Text('LEGACY', key: const Key('legacy')),
+      linkBuilder: (context, text, url, style) =>
+          Text('LEGACY', key: const Key('legacy')),
       onLinkTap: (url, title) => tapped.add(url),
     );
 
@@ -69,9 +67,8 @@ void main() {
   testWidgets('inlineLinkBuilder wins when both are given', (tester) async {
     await pump(
       tester,
-      linkBuilder:
-          (context, text, url, style) =>
-              Text('LEGACY', key: const Key('legacy')),
+      linkBuilder: (context, text, url, style) =>
+          Text('LEGACY', key: const Key('legacy')),
       inlineLinkBuilder: (link) => link.defaultSpan(),
     );
 

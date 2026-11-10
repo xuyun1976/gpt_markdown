@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:gpt_markdown/custom_widgets/code_field.dart';
@@ -73,12 +73,11 @@ void main() {
           home: GptMarkdown(
             '| A |\n|---|\n| `wide` |',
             incremental: incremental,
-            inlineCodeBuilder:
-                (_, _, _, _) => WidgetSpan(
-                  child: LayoutBuilder(
-                    builder: (_, _) => const SizedBox(width: 180, height: 20),
-                  ),
-                ),
+            inlineCodeBuilder: (_, _, _, _) => WidgetSpan(
+              child: LayoutBuilder(
+                builder: (_, _) => const SizedBox(width: 180, height: 20),
+              ),
+            ),
           ),
         ),
       );

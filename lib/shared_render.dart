@@ -40,9 +40,9 @@ Widget checkboxWidget(
   required bool checked,
   required Widget label,
 }) {
-  final style = (resolvedStyleSheet(context, config).checkbox ??
-          const CheckboxStyle())
-      .resolve(Theme.of(context).colorScheme);
+  final style =
+      (resolvedStyleSheet(context, config).checkbox ?? const CheckboxStyle())
+          .resolve(Theme.of(context).colorScheme);
   final builder = config.checkboxBuilder;
   if (builder != null) {
     return builder(context, checked, label, style);
@@ -66,9 +66,9 @@ Widget radioWidget(
   required bool selected,
   required Widget label,
 }) {
-  final style = (resolvedStyleSheet(context, config).checkbox ??
-          const CheckboxStyle())
-      .resolve(Theme.of(context).colorScheme);
+  final style =
+      (resolvedStyleSheet(context, config).checkbox ?? const CheckboxStyle())
+          .resolve(Theme.of(context).colorScheme);
   final builder = config.radioOptionBuilder;
   if (builder != null) {
     return builder(context, selected, label, style);
@@ -101,18 +101,23 @@ Widget headingWidget(
   // ambient MediaQuery; inside one, the paragraph already did it.
   final ambient = config.blocksRenderDirectly;
   final theme = GptMarkdownTheme.of(context);
-  final headingStyle = (resolvedStyleSheet(context, config).heading ??
-          const HeadingStyle())
-      .resolve(Theme.of(context).colorScheme);
-  final levelStyle =
-      [theme.h1, theme.h2, theme.h3, theme.h4, theme.h5, theme.h6][level - 1];
+  final headingStyle =
+      (resolvedStyleSheet(context, config).heading ?? const HeadingStyle())
+          .resolve(Theme.of(context).colorScheme);
+  final levelStyle = [
+    theme.h1,
+    theme.h2,
+    theme.h3,
+    theme.h4,
+    theme.h5,
+    theme.h6,
+  ][level - 1];
   final override = headingStyle.textStyle;
   final conf = config.copyWith(
     scope: MarkdownScope.heading,
-    style:
-        override == null
-            ? levelStyle
-            : (levelStyle ?? const TextStyle()).merge(override),
+    style: override == null
+        ? levelStyle
+        : (levelStyle ?? const TextStyle()).merge(override),
   );
 
   final builder = config.headingBuilder;
@@ -141,10 +146,9 @@ Widget headingWidget(
             child: CustomDivider(
               height: headingStyle.dividerThickness ?? theme.hrLineThickness,
               color: headingStyle.dividerColor ?? theme.hrLineColor,
-              padding:
-                  dividerPadding is EdgeInsets
-                      ? dividerPadding
-                      : theme.hrLinePadding,
+              padding: dividerPadding is EdgeInsets
+                  ? dividerPadding
+                  : theme.hrLinePadding,
             ),
           ),
         ],
@@ -159,6 +163,45 @@ Widget headingWidget(
   return Padding(padding: headingPadding, child: rich);
 }
 
+/// The break between two blocks in a text-rendered document: one empty line.
+///
+/// With [GptMarkdownStyleSheet.blockSpacing] unset this is the historical
+/// span, unchanged. Set, the empty line is exactly that tall. The first
+/// newline ends the line before it and so takes that line's own style —
+/// styled with the spacing, a large value would stretch the previous line as
+/// well as add the gap.
+InlineSpan paragraphBreakSpan(BuildContext context, GptMarkdownConfig config) {
+  final fontSize = config.style?.fontSize ?? 14;
+  final spacing = resolvedStyleSheet(context, config).blockSpacing;
+  if (spacing == null) {
+    return TextSpan(
+      text: "\n\n",
+      style: TextStyle(
+        fontSize: fontSize,
+        height: 1.15,
+        color: config.style?.color,
+      ),
+    );
+  }
+  // No gap is no empty line at all: a zero-height one still takes a pixel.
+  if (spacing == 0 || fontSize == 0) {
+    return TextSpan(text: "\n", style: config.style);
+  }
+  return TextSpan(
+    children: [
+      TextSpan(text: "\n", style: config.style),
+      TextSpan(
+        text: "\n",
+        style: TextStyle(
+          fontSize: fontSize,
+          height: spacing / fontSize,
+          color: config.style?.color,
+        ),
+      ),
+    ],
+  );
+}
+
 /// A block quote, honouring [GptMarkdownConfig.blockQuoteBuilder] and
 /// [BlockQuoteStyle].
 ///
@@ -170,36 +213,189 @@ InlineSpan blockQuoteSpan(
   GptMarkdownConfig config, {
   required Widget Function(GptMarkdownConfig conf) buildContent,
 }) {
-  final style = (resolvedStyleSheet(context, config).blockQuote ??
-          const BlockQuoteStyle())
-      .resolve(Theme.of(context).colorScheme);
+  return _blockSpanOf(
+    _blockQuoteWidget(context, config, buildContent: buildContent),
+  );
+}
 
-  var quotedConfig = config;
-  final textStyle = style.textStyle;
-  if (textStyle != null) {
-    final base = config.style;
-    quotedConfig = config.copyWith(
-      style: base == null ? textStyle : base.merge(textStyle),
-    );
-  }
-  final content = buildContent(quotedConfig);
+/// [blockQuoteSpan]'s widget, before it is placed in the text.
+Widget _blockQuoteWidget(
+  BuildContext context,
+  GptMarkdownConfig config, {
+  required Widget Function(GptMarkdownConfig conf) buildContent,
+}) {
+  final style =
+      (resolvedStyleSheet(context, config).blockQuote ??
+              const BlockQuoteStyle())
+          .resolve(Theme.of(context).colorScheme);
+  final content = buildContent(_withTextStyle(config, style.textStyle));
 
   final builder = config.blockQuoteBuilder;
-  final Widget quote =
-      builder == null
-          ? defaultQuoteWidget(context, content, style, config.textDirection)
-          : builder(context, content, style);
+  return builder == null
+      ? defaultQuoteWidget(context, content, style, config.textDirection)
+      : builder(context, content, style);
+}
 
+/// [config] with [textStyle] merged over its style.
+GptMarkdownConfig _withTextStyle(
+  GptMarkdownConfig config,
+  TextStyle? textStyle,
+) {
+  if (textStyle == null) {
+    return config;
+  }
+  final base = config.style;
+  return config.copyWith(
+    style: base == null ? textStyle : base.merge(textStyle),
+  );
+}
+
+/// A block widget placed in the text: it owns its line.
+InlineSpan _blockSpanOf(Widget block) {
   return TextSpan(
     children: [
       BlockWidgetSpan(
         alignment: PlaceholderAlignment.bottom,
         baseline: null,
-        child: MarkdownTextScaling.wrap(quote, enabled: false),
-        bare: quote,
+        child: MarkdownTextScaling.wrap(block, enabled: false),
+        bare: block,
       ),
     ],
   );
+}
+
+/// Whether a quote carrying an alert is drawn as an alert.
+///
+/// Not when the app replaced quotes with [GptMarkdownConfig.blockQuoteBuilder]
+/// and gave no [GptMarkdownConfig.alertBuilder]: its alerts keep going to its
+/// quote builder, as they did before alerts were recognised.
+bool _rendersAlerts(GptMarkdownConfig config) =>
+    config.alertBuilder != null || config.blockQuoteBuilder == null;
+
+/// An alert, honouring [GptMarkdownConfig.alertBuilder] and [AlertStyle].
+///
+/// [buildContent] receives the alert-scoped config and returns the body,
+/// without the marker line. [buildQuoteContent] returns the whole quote as
+/// written, marker included; it runs only if the builder asks for
+/// [AlertBuildDetails.asBlockQuote].
+InlineSpan alertSpan(
+  BuildContext context,
+  GptMarkdownConfig config, {
+  required MarkdownAlertType type,
+  required Widget Function(GptMarkdownConfig conf) buildContent,
+  required Widget Function(GptMarkdownConfig conf) buildQuoteContent,
+}) {
+  final sheet = resolvedStyleSheet(context, config).alert ?? const AlertStyle();
+  final style = sheet.resolve(type, Theme.of(context).colorScheme);
+  final content = buildContent(_withTextStyle(config, style.textStyle));
+  final title = _alertTitle(context, config, style);
+
+  late final AlertBuildDetails details;
+  details = AlertBuildDetails(
+    context: context,
+    config: config,
+    type: type,
+    style: style,
+    title: title,
+    content: content,
+    buildDefault: () => _defaultAlertWidget(details, config.textDirection),
+    buildQuote: () =>
+        _blockQuoteWidget(context, config, buildContent: buildQuoteContent),
+  );
+  final builder = config.alertBuilder;
+  return _blockSpanOf(
+    builder == null ? details.defaultAlert() : builder(context, details),
+  );
+}
+
+/// The icon and title of an alert, or an empty box when [style] hides both.
+///
+/// One paragraph, so it follows the same text scaling as the body: the icon
+/// is an inline widget and scales with the text beside it.
+Widget _alertTitle(
+  BuildContext context,
+  GptMarkdownConfig config,
+  AlertStyle style,
+) {
+  final text = style.title ?? '';
+  final icon = style.icon;
+  final showIcon = (style.showIcon ?? true) && icon != null;
+  if (text.isEmpty && !showIcon) {
+    return const SizedBox.shrink();
+  }
+  var titleStyle = (config.style ?? const TextStyle()).copyWith(
+    color: style.color,
+    fontWeight: FontWeight.w600,
+  );
+  final override = style.titleStyle;
+  if (override != null) {
+    titleStyle = titleStyle.merge(override);
+  }
+  final fontSize =
+      titleStyle.fontSize ?? DefaultTextStyle.of(context).style.fontSize ?? 14;
+  return config.getRich(
+    TextSpan(
+      style: titleStyle,
+      children: [
+        if (showIcon)
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Padding(
+              padding: EdgeInsetsDirectional.only(
+                end: text.isEmpty ? 0 : fontSize * 0.4,
+              ),
+              child: Icon(
+                icon,
+                size: style.iconSize ?? fontSize * 1.15,
+                color: style.color,
+              ),
+            ),
+          ),
+        if (text.isNotEmpty) TextSpan(text: text),
+      ],
+    ),
+    ambientScaling: config.blocksRenderDirectly,
+  );
+}
+
+/// The default alert: the title row over the body, beside a bar in the
+/// accent colour, with optional padding, background and margin.
+Widget _defaultAlertWidget(AlertBuildDetails details, TextDirection direction) {
+  final style = details.style;
+  final hasTitle = details.title is! SizedBox;
+  Widget child = Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      if (hasTitle) ...[details.title, SizedBox(height: style.titleGap ?? 4)],
+      details.content,
+    ],
+  );
+  final padding = style.padding;
+  if (padding != null) {
+    child = Padding(padding: padding, child: child);
+  }
+  child = BlockQuoteWidget(
+    color: style.color!,
+    direction: direction,
+    width: style.barWidth ?? 3,
+    child: child,
+  );
+  final background = style.backgroundColor;
+  if (background != null && background.a > 0) {
+    child = ColoredBox(color: background, child: child);
+  }
+  // Clipped rather than decorated, so the bar follows the rounded corners
+  // instead of poking out of them square.
+  final radius = style.borderRadius;
+  if (radius != null && radius != Radius.zero) {
+    child = ClipRRect(borderRadius: BorderRadius.all(radius), child: child);
+  }
+  final margin = style.margin;
+  if (margin != null) {
+    child = Padding(padding: margin, child: child);
+  }
+  return Directionality(textDirection: direction, child: child);
 }
 
 /// The default block quote: a bar, optional padding, background and margin.
@@ -277,13 +473,21 @@ class BlockWidgetSpan extends WidgetSpan {
 InlineSpan sourceTagSpan(
   BuildContext context,
   String id,
-  GptMarkdownConfig config,
-) {
-  final tagStyle = (resolvedStyleSheet(context, config).sourceTag ??
-          const SourceTagStyle())
-      .resolve(Theme.of(context).colorScheme);
+  GptMarkdownConfig config, {
+  String? url,
+}) {
+  final tagStyle =
+      (resolvedStyleSheet(context, config).sourceTag ?? const SourceTagStyle())
+          .resolve(Theme.of(context).colorScheme);
   final onSourceTagTap = config.onSourceTagTap;
-  final onTap = onSourceTagTap == null ? null : () => onSourceTagTap(id);
+  final onLinkTap = config.onLinkTap;
+  // A tag the document gives a URL (`[1]: https://…`) opens it like a link
+  // when the host handles links but not tags.
+  final VoidCallback? onTap = onSourceTagTap != null
+      ? () => onSourceTagTap(id)
+      : url != null && onLinkTap != null
+      ? () => onLinkTap(url, id)
+      : null;
 
   final details = SourceTagBuildDetails(
     context: context,
@@ -292,6 +496,7 @@ InlineSpan sourceTagSpan(
     // documents itself as defaulting to the surrounding style; now it does.
     style: tagStyle.textStyle ?? config.style ?? const TextStyle(),
     id: id,
+    url: url,
     sourceTagStyle: tagStyle,
     onTap: onTap,
   );
@@ -338,10 +543,9 @@ InlineSpan defaultSourceTagSpan(SourceTagBuildDetails details) {
         color:
             style.backgroundColor ??
             Theme.of(details.context).colorScheme.onInverseSurface,
-        shape:
-            style.shape == BoxShape.rectangle
-                ? const RoundedRectangleBorder()
-                : const OvalBorder(),
+        shape: style.shape == BoxShape.rectangle
+            ? const RoundedRectangleBorder()
+            : const OvalBorder(),
         child: FittedBox(
           fit: BoxFit.scaleDown,
           child: Text(
@@ -364,9 +568,9 @@ Widget codeBlockWidget(
   required String code,
   required bool closed,
 }) {
-  final style = (resolvedStyleSheet(context, config).codeBlock ??
-          const CodeBlockStyle())
-      .resolve(Theme.of(context).colorScheme);
+  final style =
+      (resolvedStyleSheet(context, config).codeBlock ?? const CodeBlockStyle())
+          .resolve(Theme.of(context).colorScheme);
   return config.codeBuilder?.call(context, name, code, closed) ??
       CodeField(
         scalesItsOwnText: config.blocksRenderDirectly,
@@ -441,47 +645,153 @@ Widget orderedListItem(
   );
 }
 
+/// Where the default image widget loads [url] from.
+///
+/// A `data:` URL is decoded here: it is not a network address, and outside a
+/// browser `NetworkImage` cannot load one. Anything else goes to the network
+/// as before.
+ImageProvider _imageProvider(String url) {
+  if (!_isDataUrl(url)) {
+    return NetworkImage(url);
+  }
+  return MemoryImage(_dataUrlBytes(url));
+}
+
+bool _isDataUrl(String url) =>
+    url.length > 5 && url.substring(0, 5).toLowerCase() == 'data:';
+
+/// Decoded `data:` URLs, most recently used last.
+///
+/// A [MemoryImage] is identified by its byte list, so decoding afresh on every
+/// build — and a streaming reply rebuilds constantly — would make every build
+/// a new image: decoded again, and flickering while it is. Handing back the
+/// same list keeps the image cache hitting.
+final LinkedHashMap<String, Uint8List> _dataUrlCache = LinkedHashMap();
+
+/// Upper bound on [_dataUrlCache], in entries and in decoded bytes. Past
+/// either, the least recently used entries go.
+const int _dataUrlCacheEntries = 32;
+const int _dataUrlCacheBytes = 32 * 1024 * 1024;
+int _dataUrlCachedBytes = 0;
+
+/// The bytes of the `data:` URL [url], or an empty list when it is not an
+/// image or does not decode — which the image widget then reports through its
+/// error builder, like any other image that fails to load.
+Uint8List _dataUrlBytes(String url) {
+  final cached = _dataUrlCache.remove(url);
+  if (cached != null) {
+    _dataUrlCache[url] = cached;
+    return cached;
+  }
+  Uint8List bytes;
+  try {
+    final data = UriData.parse(url);
+    bytes = data.mimeType.toLowerCase().startsWith('image/')
+        ? data.contentAsBytes()
+        : Uint8List(0);
+  } on FormatException {
+    bytes = Uint8List(0);
+  }
+  _dataUrlCache[url] = bytes;
+  _dataUrlCachedBytes += bytes.length;
+  while (_dataUrlCache.length > _dataUrlCacheEntries ||
+      (_dataUrlCachedBytes > _dataUrlCacheBytes && _dataUrlCache.length > 1)) {
+    final oldest = _dataUrlCache.keys.first;
+    _dataUrlCachedBytes -= _dataUrlCache.remove(oldest)!.length;
+  }
+  return bytes;
+}
+
 /// An image, honouring [GptMarkdownConfig.imageBuilder], [ImageStyle] and
 /// [GptMarkdownConfig.onImageTap].
+///
+/// [url] may be a `data:` URL — `data:image/png;base64,...` — as well as a
+/// network address. SVG renders too: a `.svg` URL or `data:image/svg+xml`
+/// directly, and any other network image that turns out not to be a bitmap
+/// when it arrives.
+///
+/// [onTap] replaces [GptMarkdownConfig.onImageTap] for this image — set when
+/// the image is a link's label, so tapping it follows the link.
 InlineSpan imageSpan(
   BuildContext context,
   GptMarkdownConfig config, {
   required String url,
   double? width,
   double? height,
+  VoidCallback? onTap,
 }) {
   // Resolved before the image is built, not after: `fit` decides how the
   // bytes are drawn, so it has to be in hand at construction time. It used to
   // be resolved below, purely for the border and padding, which is why `fit`,
   // `maxWidth` and `maxHeight` were settable and inert.
-  final imageStyle = (resolvedStyleSheet(context, config).image ??
-          const ImageStyle())
-      .resolve(Theme.of(context).colorScheme);
+  final imageStyle =
+      (resolvedStyleSheet(context, config).image ?? const ImageStyle()).resolve(
+        Theme.of(context).colorScheme,
+      );
 
   final builder = config.imageBuilder;
   final Widget image;
+  // An SVG keeps its proportions unless a style says otherwise: stretched to
+  // a box like a bitmap, a badge given only a width would distort.
+  final svgFit = imageStyle.fit ?? BoxFit.contain;
+  Widget svgError(BuildContext context) => const CustomImageError();
+  Widget svgLoading(BuildContext context) =>
+      const CustomImageLoading(progress: 1);
   if (builder != null) {
     image = builder(context, url, width, height);
+  } else if (isSvgUrl(url)) {
+    image = SizedBox(
+      width: width,
+      height: height,
+      child: _isDataUrl(url)
+          ? memorySvg(
+              _dataUrlBytes(url),
+              width: width,
+              height: height,
+              fit: svgFit,
+              error: svgError,
+            )
+          : NetworkSvg(
+              url,
+              width: width,
+              height: height,
+              fit: svgFit,
+              loading: svgLoading,
+              error: svgError,
+            ),
+    );
   } else {
     image = SizedBox(
       width: width,
       height: height,
       child: Image(
-        image: NetworkImage(url),
+        image: _imageProvider(url),
         loadingBuilder: (context, child, loadingProgress) {
           if (loadingProgress == null) {
             return child;
           }
           final total = loadingProgress.expectedTotalBytes;
           return CustomImageLoading(
-            progress:
-                total == null
-                    ? 1
-                    : loadingProgress.cumulativeBytesLoaded / total,
+            progress: total == null
+                ? 1
+                : loadingProgress.cumulativeBytesLoaded / total,
           );
         },
         fit: imageStyle.fit ?? BoxFit.fill,
-        errorBuilder: (context, error, stackTrace) => const CustomImageError(),
+        // An image that arrived but is not a bitmap may be an SVG whose URL
+        // does not say so — `https://img.shields.io/pub/v/x`, every README
+        // badge. It is tried as one; a failed download is not retried.
+        errorBuilder: (context, error, stackTrace) =>
+            error is NetworkImageLoadException || _isDataUrl(url)
+            ? const CustomImageError()
+            : NetworkSvg(
+                url,
+                width: width,
+                height: height,
+                fit: svgFit,
+                loading: svgLoading,
+                error: svgError,
+              ),
       ),
     );
   }
@@ -513,7 +823,12 @@ InlineSpan imageSpan(
     decorated = Padding(padding: imagePadding, child: decorated);
   }
   final onImageTap = config.onImageTap;
-  if (onImageTap != null) {
+  if (onTap != null) {
+    decorated = MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(onTap: onTap, child: decorated),
+    );
+  } else if (onImageTap != null) {
     decorated = GestureDetector(onTap: () => onImageTap(url), child: decorated);
   }
   return scaledWidgetSpan(
@@ -524,82 +839,60 @@ InlineSpan imageSpan(
   );
 }
 
-/// Rendered maths, honouring [GptMarkdownConfig.latexBuilder],
+/// Rendered maths, honouring [GptMarkdownConfig.blockLatexBuilder], the
+/// deprecated [GptMarkdownConfig.latexBuilder],
 /// [GptMarkdownConfig.latexWorkaround] and [LatexStyle].
 ///
 /// [inline] picks between an inline formula and a display block; only the
 /// block form takes [LatexStyle]'s padding, background and horizontal scroll.
+/// Inline maths inside a paragraph goes through [_latexSpan], which also
+/// honours [GptMarkdownConfig.inlineLatexBuilder].
 Widget latexWidget(
   BuildContext context,
   GptMarkdownConfig config, {
   required String tex,
   required bool inline,
 }) {
-  final workaround = config.latexWorkaround ?? (String tex) => tex;
-  final builder =
-      config.latexBuilder ??
-      (BuildContext context, String tex, TextStyle textStyle, bool inline) =>
-          SelectableAdapter(
-            selectedText: tex,
-            child: Math.tex(
-              tex,
-              textStyle: textStyle,
-              mathStyle: MathStyle.display,
-              textScaleFactor: 1,
-              settings: const TexParserSettings(strict: Strict.ignore),
-              options: MathOptions(
-                sizeUnderTextStyle: MathSize.large,
-                color:
-                    config.style?.color ??
-                    Theme.of(context).colorScheme.onSurface,
-                fontSize: MarkdownTextScaling.fontSize(
-                  context,
-                  textStyle.fontSize ??
-                      Theme.of(context).textTheme.bodyMedium?.fontSize ??
-                      14,
-                ),
-                mathFontOptions: FontOptions(
-                  fontFamily: "Main",
-                  fontWeight: config.style?.fontWeight ?? FontWeight.normal,
-                  fontShape: FontStyle.normal,
-                ),
-                textFontOptions: FontOptions(
-                  fontFamily: "Main",
-                  fontWeight: config.style?.fontWeight ?? FontWeight.normal,
-                  fontShape: FontStyle.normal,
-                ),
-                style: MathStyle.display,
-              ),
-              onErrorFallback:
-                  (err) => Text(
-                    workaround(tex),
-                    textDirection: config.textDirection,
-                    style: textStyle.copyWith(
-                      color:
-                          (!kDebugMode)
-                              ? null
-                              : Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-            ),
-          );
-
-  final latexStyle = (resolvedStyleSheet(context, config).latex ??
-          const LatexStyle())
-      .resolve(Theme.of(context).colorScheme);
-  final override = latexStyle.textStyle;
-  final base = config.style ?? const TextStyle();
+  final latexStyle =
+      (resolvedStyleSheet(context, config).latex ?? const LatexStyle()).resolve(
+        Theme.of(context).colorScheme,
+      );
+  final rendered = (config.latexWorkaround ?? (String tex) => tex)(tex);
+  final style = _latexTextStyle(config, latexStyle);
+  final blockBuilder = inline ? null : config.blockLatexBuilder;
+  // ignore: deprecated_member_use_from_same_package
+  final legacyBuilder = config.latexBuilder;
   // Build below the boundary so custom builders and the math engine read the
   // effective scaler, including when this formula is nested inside a block.
   Widget maths = MarkdownTextScaling.wrap(
     Builder(
-      builder:
-          (mathContext) => builder(
-            mathContext,
-            workaround(tex),
-            override == null ? base : base.merge(override),
-            inline,
-          ),
+      builder: (mathContext) {
+        Widget buildDefault() => _defaultLatex(
+          mathContext,
+          config,
+          tex: rendered,
+          source: tex,
+          style: style,
+          inline: inline,
+        );
+        if (blockBuilder != null) {
+          return blockBuilder(
+            BlockLatexBuildDetails(
+              context: mathContext,
+              config: config,
+              style: style,
+              tex: rendered,
+              source: tex,
+              onTap: _latexTap(config, rendered, tex, inline),
+              buildDefault: buildDefault,
+            ),
+          );
+        }
+        if (legacyBuilder != null) {
+          return legacyBuilder(mathContext, rendered, style, inline);
+        }
+        return buildDefault();
+      },
     ),
     enabled: !inline && config.blocksRenderDirectly,
   );
@@ -632,10 +925,164 @@ Widget latexWidget(
   return maths;
 }
 
+/// An inline formula as a span, honouring
+/// [GptMarkdownConfig.inlineLatexBuilder]; without one, [latexWidget] placed
+/// with [placeholder].
+///
+/// [placeholder] puts a widget in the line the way the calling pipeline does,
+/// so the default formula sits exactly where it always has.
+InlineSpan _latexSpan(
+  BuildContext context,
+  GptMarkdownConfig config, {
+  required String tex,
+  required InlineSpan Function(Widget child) placeholder,
+}) {
+  final builder = config.inlineLatexBuilder;
+  if (builder == null) {
+    return placeholder(latexWidget(context, config, tex: tex, inline: true));
+  }
+  final latexStyle =
+      (resolvedStyleSheet(context, config).latex ?? const LatexStyle()).resolve(
+        Theme.of(context).colorScheme,
+      );
+  final rendered = (config.latexWorkaround ?? (String tex) => tex)(tex);
+  final style = _latexTextStyle(config, latexStyle);
+  return builder(
+    InlineLatexBuildDetails(
+      context: context,
+      config: config,
+      style: style,
+      tex: rendered,
+      source: tex,
+      onTap: _latexTap(config, rendered, tex, true),
+      // The paragraph scales its placeholders, so whatever goes in one must
+      // not scale itself as well.
+      placeholder: (child) =>
+          placeholder(MarkdownTextScaling.wrap(child, enabled: false)),
+      buildDefault: () => Builder(
+        builder: (mathContext) => _defaultLatex(
+          mathContext,
+          config,
+          tex: rendered,
+          source: tex,
+          style: style,
+          inline: true,
+        ),
+      ),
+    ),
+  );
+}
+
+/// The style a formula is drawn with: [LatexStyle.textStyle] over the
+/// surrounding style.
+TextStyle _latexTextStyle(GptMarkdownConfig config, LatexStyle latexStyle) {
+  final override = latexStyle.textStyle;
+  final base = config.style ?? const TextStyle();
+  return override == null ? base : base.merge(override);
+}
+
+/// [GptMarkdownConfig.onLatexTap] bound to a formula as a whole, or null.
+VoidCallback? _latexTap(
+  GptMarkdownConfig config,
+  String tex,
+  String source,
+  bool inline,
+) {
+  final onTap = config.onLatexTap;
+  if (onTap == null) return null;
+  return () => onTap(LatexTapDetails(tex: tex, source: source, inline: inline));
+}
+
+/// The package's own formula: [tex] drawn by `val_latex_flutter`, with
+/// [GptMarkdownConfig.onLatexTap] wired to the part tapped.
+Widget _defaultLatex(
+  BuildContext context,
+  GptMarkdownConfig config, {
+  required String tex,
+  required String source,
+  required TextStyle style,
+  required bool inline,
+}) {
+  // Bold surrounding text (a heading, say) sets its formulas in bold.
+  final bold = (config.style?.fontWeight?.value ?? 400) >= 600;
+  final onLatexTap = config.onLatexTap;
+  // `Math` would scale by the ambient text scaler itself. Scaling the text
+  // size first and then enlarging by a fifth, as formulas always have been,
+  // needs the formula's own scaling off — the two differ for a non-linear
+  // scaler.
+  Widget math = MediaQuery.withNoTextScaling(
+    child: Math.tex(
+      bold ? '\\boldsymbol{$tex}' : tex,
+      // Display style everywhere, as an inline box: big operators and
+      // full-size fractions even in a paragraph, and no full-width block, so
+      // the formula keeps its own width and `LatexStyle` places it.
+      displayMode: true,
+      block: false,
+      // No wrapping or overflow handling: both need a `LayoutBuilder`, which
+      // throws inside `IntrinsicWidth` — the usual chat-bubble shrink-wrap
+      // (#107). `LatexStyle.scrollBlockHorizontally` covers wide formulas
+      // instead.
+      wrap: false,
+      overflow: MathOverflow.visible,
+      textStyle: style.copyWith(
+        color: config.style?.color ?? Theme.of(context).colorScheme.onSurface,
+        fontSize:
+            MarkdownTextScaling.fontSize(
+              context,
+              style.fontSize ??
+                  Theme.of(context).textTheme.bodyMedium?.fontSize ??
+                  14,
+            ) *
+            1.2,
+      ),
+      // Streaming on, explicitly: an unfinished formula renders what has
+      // arrived instead of failing. `Math.tex` defaults it off since
+      // val_latex_flutter 0.1.1, and a formula still streaming in reaches
+      // here closed but incomplete.
+      parseOptions: const ParseOptions(strict: Strict.ignore, streaming: true),
+      onTap: onLatexTap == null
+          ? null
+          : (tap) => onLatexTap(
+              LatexTapDetails(
+                tex: tex,
+                source: source,
+                inline: inline,
+                tappedTex: tap.tex,
+                href: tap.link,
+              ),
+            ),
+      // `Math` registers with the enclosing `SelectionArea` itself and copies
+      // the LaTeX of what is selected, so it needs no adapter.
+      // Plain text again, so it takes the scaling switched off above.
+      onError: (_, _) => MediaQuery(
+        data: MediaQuery.of(context),
+        child: Text(
+          tex,
+          textDirection: config.textDirection,
+          style: style.copyWith(
+            color: (!kDebugMode) ? null : Theme.of(context).colorScheme.error,
+          ),
+        ),
+      ),
+    ),
+  );
+  if (onLatexTap != null) {
+    math = MouseRegion(cursor: SystemMouseCursors.click, child: math);
+  }
+  return math;
+}
+
 /// Owns the horizontal scroll state of one mounted table.
 class _TableViewport extends StatefulWidget {
-  const _TableViewport({required this.child});
+  const _TableViewport({
+    required this.child,
+    this.overflow = TableOverflow.scroll,
+  });
   final Widget child;
+
+  /// [TableOverflow.wrap] drops the scroll view, so the table is laid out
+  /// against the available width and shrinks its columns to fit it.
+  final TableOverflow overflow;
   @override
   State<_TableViewport> createState() => _TableViewportState();
 }
@@ -656,6 +1103,10 @@ class _TableViewportState extends State<_TableViewport> {
 
   @override
   Widget build(BuildContext context) {
+    final table = _TableIntrinsicsGuard(child: widget.child);
+    if (widget.overflow == TableOverflow.wrap) {
+      return table;
+    }
     // A horizontal scrollable never gets a scrollbar from the ambient
     // behaviour — `MaterialScrollBehavior.buildScrollbar` returns the child
     // unchanged for `Axis.horizontal` on every platform — so this widget is
@@ -672,7 +1123,7 @@ class _TableViewportState extends State<_TableViewport> {
         return SingleChildScrollView(
           controller: _controller,
           scrollDirection: Axis.horizontal,
-          child: widget.child,
+          child: table,
         );
       case TargetPlatform.linux:
       case TargetPlatform.macOS:
@@ -696,7 +1147,7 @@ class _TableViewportState extends State<_TableViewport> {
               scrollDirection: Axis.horizontal,
               child: Padding(
                 padding: const EdgeInsets.only(bottom: _barStrip),
-                child: widget.child,
+                child: table,
               ),
             ),
           ),

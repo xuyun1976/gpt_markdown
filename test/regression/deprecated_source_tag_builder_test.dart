@@ -1,6 +1,6 @@
 // ignore_for_file: deprecated_member_use_from_same_package
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
 
@@ -41,9 +41,8 @@ void main() {
   testWidgets('the legacy builder still renders its widget', (tester) async {
     await pump(
       tester,
-      sourceTagBuilder:
-          (context, content, textStyle) =>
-              Text('L$content', key: const Key('legacy')),
+      sourceTagBuilder: (context, content, textStyle) =>
+          Text('L$content', key: const Key('legacy')),
     );
 
     expect(find.byKey(const Key('legacy')), findsOneWidget);
@@ -71,9 +70,8 @@ void main() {
     final tapped = <String>[];
     await pump(
       tester,
-      sourceTagBuilder:
-          (context, content, textStyle) =>
-              Text('L$content', key: const Key('legacy')),
+      sourceTagBuilder: (context, content, textStyle) =>
+          Text('L$content', key: const Key('legacy')),
       onSourceTagTap: tapped.add,
     );
 
@@ -88,9 +86,8 @@ void main() {
   ) async {
     await pump(
       tester,
-      sourceTagBuilder:
-          (context, content, textStyle) =>
-              Text('L$content', key: const Key('legacy')),
+      sourceTagBuilder: (context, content, textStyle) =>
+          Text('L$content', key: const Key('legacy')),
       inlineSourceTagBuilder: (tag) => tag.defaultSpan(),
     );
 

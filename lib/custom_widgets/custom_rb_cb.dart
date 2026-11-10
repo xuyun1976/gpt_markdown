@@ -1,5 +1,5 @@
 import 'markdown_text_scaling.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../styles/checkbox_style.dart';
 
@@ -166,14 +166,12 @@ class CustomCb extends StatelessWidget {
           value: value,
           activeColor: style.checkedColor,
           checkColor: style.checkColor,
-          side:
-              unchecked == null ? null : BorderSide(color: unchecked, width: 2),
-          shape:
-              radius == null
-                  ? null
-                  : RoundedRectangleBorder(
-                    borderRadius: BorderRadius.all(radius),
-                  ),
+          side: unchecked == null
+              ? null
+              : BorderSide(color: unchecked, width: 2),
+          shape: radius == null
+              ? null
+              : RoundedRectangleBorder(borderRadius: BorderRadius.all(radius)),
           onChanged: (next) {
             if (interactive && changed != null && next != null) {
               changed(next);

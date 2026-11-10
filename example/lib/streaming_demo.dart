@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
 
 import 'demo_theme.dart';
@@ -158,6 +158,14 @@ class _StreamingPageState extends State<StreamingPage> {
                     charactersPerSecond: _charactersPerSecond,
                     revealFadeSeconds: _fadeSeconds,
                     onLinkTap: (url, title) {},
+                    // `$$…$$` blocks in the reply. Single `$` stays off for a
+                    // reply that also writes `\(…\)`, so prices stay text.
+                    useDollarSignsForLatex: true,
+                    // The longer derivations are wider than a chat column;
+                    // they scroll sideways instead of running off the edge.
+                    styleSheet: const GptMarkdownStyleSheet(
+                      latex: LatexStyle(scrollBlockHorizontally: true),
+                    ),
                   ),
                 ),
               ),

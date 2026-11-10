@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gpt_markdown/custom_widgets/bidi_rich_text.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
@@ -7,7 +7,7 @@ import 'package:gpt_markdown/gpt_markdown.dart';
 /// right-to-left paragraphs (flutter/flutter#54400).
 ///
 /// Inline LaTeX is replaced by a fixed-size box per formula so the assertions
-/// depend on layout only, not on font metrics or `flutter_math` internals.
+/// depend on layout only, not on font metrics or math-renderer internals.
 
 const _mathWidths = <String, double>{
   'one^1': 30,
@@ -36,12 +36,11 @@ Widget _app(
               style: const TextStyle(fontSize: 10),
               useDollarSignsForLatex: dollars,
               textDirection: direction,
-              latexBuilder:
-                  (context, tex, style, inline) => SizedBox(
-                    key: ValueKey('tex:$tex'),
-                    width: _mathWidths[tex] ?? 50,
-                    height: 10,
-                  ),
+              latexBuilder: (context, tex, style, inline) => SizedBox(
+                key: ValueKey('tex:$tex'),
+                width: _mathWidths[tex] ?? 50,
+                height: 10,
+              ),
             ),
           ),
         ),

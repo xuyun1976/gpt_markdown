@@ -69,6 +69,25 @@ Overriding one value never discards the rest.
 
 ---
 
+## Spacing between blocks
+
+`blockSpacing` sets the vertical gap between blocks — paragraphs, headings,
+lists, code, tables, quotes — in logical pixels:
+
+```dart
+styleSheet: const GptMarkdownStyleSheet(blockSpacing: 8),
+```
+
+Unset, the gap is one empty line: 1.15 × the font size, 16 pixels at the
+default 14. It grows with the text scale either way, so a reader who enlarges
+text keeps the same proportions. Extra blank lines in the source never widen
+it — two, three or ten in a row give one gap — and `0` removes it.
+
+A block's own margin or padding is added on top, so a quote with
+`BlockQuoteStyle(margin: ...)` sits that much further away.
+
+---
+
 ## HeadingStyle
 
 `textStyle` · `padding` · `showDivider` · `dividerColor` · `dividerThickness` ·
@@ -323,6 +342,86 @@ GptMarkdown(
 
 ---
 
+## AlertStyle
+
+A quote whose first line is `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`
+or `[!CAUTION]` is drawn as an alert: an icon and title in an accent colour
+over the body, beside a bar in the same colour, on a faint tint of that colour
+with rounded corners. The marker is
+case-insensitive and must be alone on its line; anything else — `[!FOO]`, or
+text after the marker — stays an ordinary quote.
+
+```markdown
+> [!WARNING]
+> Back up your data before upgrading.
+```
+
+`color` · `backgroundColor` · `icon` · `iconSize` · `showIcon` · `title` ·
+`titleStyle` · `titleGap` · `textStyle` · `barWidth` · `borderRadius` ·
+`padding` · `margin` · `note` · `tip` · `important` · `warning` · `caution`
+
+The top-level fields apply to every type. `note`, `tip`, `important`,
+`warning` and `caution` take an `AlertStyle` that overrides them for that type,
+field by field:
+
+```dart
+styleSheet: const GptMarkdownStyleSheet(
+  alert: AlertStyle(
+    barWidth: 4,
+    backgroundColor: Color(0x0A000000),
+    borderRadius: Radius.circular(8),
+    warning: AlertStyle(
+      title: 'Heads up',
+      icon: Icons.bolt,
+      color: Colors.deepOrange,
+    ),
+    tip: AlertStyle(title: '', showIcon: false), // body only
+  ),
+),
+```
+
+Unset, each type gets its own accent colour — a lighter one on a dark
+`ColorScheme` — its own icon, and an English title ("Note", "Tip",
+"Important", "Warning", "Caution"). Set `title` to translate them. An empty
+`title` with `showIcon: false` hides the title row.
+
+The background defaults to the accent colour at 8% opacity (12% on a dark
+scheme), so it blends with whatever surface the alert sits on and follows a
+custom `color`. `backgroundColor: Colors.transparent` turns the tint off, and
+`borderRadius: Radius.zero` squares the corners.
+
+**Replacing the widget.** `alertBuilder` receives `AlertBuildDetails`: the
+`type`, the resolved `style`, the stock `title` row and the rendered `content`.
+`defaultAlert()` returns the stock alert and `asBlockQuote()` the plain quote,
+marker included:
+
+```dart
+GptMarkdown(
+  text,
+  alertBuilder: (context, details) {
+    if (details.type == MarkdownAlertType.tip) {
+      return details.asBlockQuote(); // no alert for tips
+    }
+    return Card(
+      color: details.style.color!.withValues(alpha: 0.08),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [details.title, const SizedBox(height: 4), details.content],
+        ),
+      ),
+    );
+  },
+)
+```
+
+An app that sets `blockQuoteBuilder` and no `alertBuilder` keeps getting
+alerts through `blockQuoteBuilder`, as ordinary quotes — the look it built for
+quotes does not change. Add an `alertBuilder` to opt in.
+
+---
+
 ## CodeBlockStyle
 
 `backgroundColor` · `borderColor` · `borderWidth` · `borderRadius` · `padding` ·
@@ -416,7 +515,8 @@ GptMarkdown(
 ## TableStyle
 
 `borderColor` · `borderWidth` · `borderRadius` · `cellPadding` ·
-`headerBackground` · `headerTextStyle` · `rowStripeColor` · `columnWidth`
+`headerBackground` · `headerTextStyle` · `rowStripeColor` · `columnWidth` ·
+`overflow`
 
 ```dart
 styleSheet: const GptMarkdownStyleSheet(
@@ -436,11 +536,27 @@ sized to its content, which lays every cell out twice — once to measure, once
 for real. `columnWidth: FixedColumnWidth(120)` skips that measurement, which is
 the escape hatch for a large or streaming table.
 
-A flex policy is not. Tables already scroll horizontally when they exceed the
-available width, so the table is laid out against an unbounded width and a flex
-column has no finite width to take a share of: `FlexColumnWidth()` collapses
-the table to zero width and wraps every cell to one character a line.
-[comparison](comparison.md) has the measurements.
+A flex policy is not, with the default `overflow`. Tables scroll horizontally
+when they exceed the available width, so the table is laid out against an
+unbounded width and a flex column has no finite width to take a share of:
+`FlexColumnWidth()` collapses the table to zero width and wraps every cell to
+one character a line. [comparison](comparison.md) has the measurements.
+
+`overflow` decides what a table wider than the screen does:
+
+- `TableOverflow.scroll` (the default) keeps columns at their content width and
+  scrolls the table sideways.
+- `TableOverflow.wrap` fits the table to the available width and wraps the text
+  in its cells. Columns shrink toward their longest word, so short columns stay
+  whole; with more columns than the words allow, words break rather than the
+  table running off screen. The table is laid out against a bounded width here,
+  so a flex `columnWidth` works.
+
+```dart
+styleSheet: const GptMarkdownStyleSheet(
+  table: TableStyle(overflow: TableOverflow.wrap),
+),
+```
 
 ---
 
@@ -478,6 +594,34 @@ GptMarkdown(
 ```
 
 `width` and `height` come from the alt text when written as `WxH`.
+
+**Inline images.** A `data:` URL works wherever a network URL does:
+
+```markdown
+![chart](data:image/png;base64,iVBORw0KGgo...)
+```
+
+The default image widget decodes it — base64 or percent-encoded — and keeps
+the decoded bytes, so a streaming reply that rebuilds constantly does not
+decode or flicker again. Data that does not decode, or is not an image, shows
+the broken-image icon. A large image is decoded on the UI thread the first time
+it appears, which is fine at chart and screenshot sizes.
+
+**SVG.** An SVG renders like any other image: a `.svg` URL or a
+`data:image/svg+xml` URL directly, and an image whose URL says nothing — a
+README badge such as `https://img.shields.io/pub/v/gpt_markdown` — when it
+arrives and turns out not to be a bitmap. Each SVG is downloaded once and kept,
+so a streaming reply does not fetch it again. A download that fails, or a
+response that is not an SVG, shows the broken-image icon. Two gaps in
+`flutter_svg` are worked around first, both hit by every shields.io badge: text
+inside a uniformly scaled group is rewritten to its real size (it would be ten
+times too large), and an SVG embedded in an `<image>` — a badge's logo — is
+inlined (it would be dropped; only bitmaps are drawn there). Unsized, an SVG keeps
+its own proportions (`BoxFit.contain`); `ImageStyle.fit` overrides that.
+
+An `imageBuilder` receives the `data:` URL as written. `CachedNetworkImage`
+and other network loaders cannot open one, so a builder that uses them should
+hand `data:` URLs to `Image.memory(UriData.parse(url).contentAsBytes())`.
 
 ---
 
@@ -551,7 +695,8 @@ styleSheet: const GptMarkdownStyleSheet(
 > formula overflows on a phone. This is the single most common LaTeX
 > complaint.
 
-The renderer itself is built in. `latexBuilder` replaces it — see
+The renderer itself is built in. `inlineLatexBuilder` and `blockLatexBuilder`
+replace it, and `onLatexTap` handles taps — see
 [getting started](getting-started.md#latex).
 
 ---
@@ -567,8 +712,8 @@ style-sheet object — they replace the component outright, and `CodeBlockStyle`
 `tableBuilder` does receive is the ambient body style, empty when the widget
 sets none.
 
-The three deprecated builders carry an unresolved style as well, kept that way
-because the builders written against them expect it: `sourceTagBuilder` is
+Three of the deprecated builders carry an unresolved style as well, kept that
+way because the builders written against them expect it: `sourceTagBuilder` is
 handed an empty `TextStyle` whenever `SourceTagStyle.textStyle` is unset,
 `linkBuilder` the ambient body style rather than the resolved link style its
 replacement is given, and `highlightBuilder` the ambient body style — the
@@ -578,13 +723,16 @@ resolved code style reaches it only where the surrounding style is null.
 |---|---|
 | `headingBuilder` | `(context, int level, Widget content, HeadingStyle style)` |
 | `blockQuoteBuilder` | `(context, Widget content, BlockQuoteStyle style)` |
+| `alertBuilder` | `(context, AlertBuildDetails details)` |
 | `checkboxBuilder` | `(context, bool checked, Widget content, CheckboxStyle style)` |
 | `radioOptionBuilder` | `(context, bool selected, Widget content, CheckboxStyle style)` |
 | `hrBuilder` | `(context, HrStyle style)` |
 | `codeBuilder` | `(context, String name, String code, bool closed)` |
 | `tableBuilder` | `(context, rows, TextStyle style, GptMarkdownConfig config)` |
 | `imageBuilder` | `(context, String url, double? width, double? height)` |
-| `latexBuilder` | `(context, String tex, TextStyle style, bool inline)` |
+| `inlineLatexBuilder` | `(InlineLatexBuildDetails details)` → `InlineSpan` |
+| `blockLatexBuilder` | `(BlockLatexBuildDetails details)` → `Widget` |
+| `latexBuilder` | *Deprecated.* `(context, String tex, TextStyle style, bool inline)` |
 | `inlineLinkBuilder` | `(LinkBuildDetails details)` → `InlineSpan` |
 | `linkBuilder` | *Deprecated.* `(context, InlineSpan label, String url, TextStyle style)` |
 | `inlineCodeBuilder` | `(context, String code, TextStyle style, InlineCodeStyle codeStyle)` |

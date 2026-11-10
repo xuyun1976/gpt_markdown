@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
@@ -266,6 +266,36 @@ void main() {
     testWidgets('autolink: false still renders explicit links', (tester) async {
       await pump(tester, 'see [docs](https://example.com)', autolink: false);
       expect(linkCount(tester), 1);
+    });
+  });
+
+  // `<https://…>` and `<me@example.com>` are CommonMark autolinks, which the
+  // parser now reads as links. `autolink: false` still turns them off, as it
+  // always has: they read as written, brackets and all.
+  group('angle-bracket autolinks', () {
+    testWidgets('<https://…> is a link without its brackets', (tester) async {
+      await pump(tester, 'see <https://example.com/a?b=1> now');
+      expect(linkCount(tester), 1);
+      expect(plainText(tester), 'see https://example.com/a?b=1 now');
+      final tap = await tapLink(tester);
+      expect(tap.url, 'https://example.com/a?b=1');
+    });
+
+    testWidgets('<email> opens mailto:', (tester) async {
+      await pump(tester, 'write to <me@example.com>');
+      expect(plainText(tester), 'write to me@example.com');
+      final tap = await tapLink(tester);
+      expect(tap.url, 'mailto:me@example.com');
+    });
+
+    testWidgets('autolink: false shows them as written', (tester) async {
+      await pump(
+        tester,
+        'see <https://example.com> or <me@x.com>',
+        autolink: false,
+      );
+      expect(linkCount(tester), 0);
+      expect(plainText(tester), 'see <https://example.com> or <me@x.com>');
     });
   });
 }
